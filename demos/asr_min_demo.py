@@ -62,7 +62,9 @@ class Callback(RecognitionCallback):
             # 识别出一句完整的话(带结束标点)时换行
             if text[-1] in '。？！!?':
                 print()
-
+            # print(sentence)
+            if sentence['sentence_end'] and text:
+                print(f'[done]{text}')
 
 def main():
     if not dashscope.api_key:

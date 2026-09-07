@@ -17,7 +17,7 @@ import threading
 import paho.mqtt.client as mqtt
 
 from .config import BROKER, PORT, PUB_TOPICS, SUB_TOPICS
-from .workers import EarWorker
+from .workers import EarWorker, BrainWorker, SpeakWorker
 
 _STOP = object()   # 停机哨兵：stop() 投进 pub/*、sub/* 队列，消费者 get() 到即退出
 
@@ -42,8 +42,11 @@ class MainLoop:
         self.qos = {t['name']: t['qos'] for t in SUB_TOPICS + PUB_TOPICS}
 
         # ---- worker 登记：新器官在这里加一行，start() 即统一启动 ----
+        # 流水线：ear(ASR) → asr 队列 → brain(LLM) → tts 队列 → speak(TTS) → pub/speak
         ear = EarWorker(self.queues, stop_token=_STOP)
-        self._worker_runs = [ear.run]
+        brain = BrainWorker(self.queues, stop_token=_STOP)
+        speak = SpeakWorker(self.queues, stop_token=_STOP)
+        self._worker_runs = [ear.run, brain.run, speak.run]
 
         self._threads: list[threading.Thread] = []
         self._running = False
@@ -134,8 +137,6 @@ class MainLoop:
 
     # ------------------------------------------------------------- 发送线程
     def _start_publishers(self):
-        # 出站对应 PUB_TOPICS。若误遍历 SUB_TOPICS，会把收到的入站消息
-        # 原样重发回同一个 sub/* 主题，形成无限回灌循环（早期版本踩过的坑）
         for t in self.pub_topics:
             self._spawn(self._publish_worker, t['name'], self.queues[t['name']])
 

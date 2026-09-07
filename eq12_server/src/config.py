@@ -1,6 +1,6 @@
 
 
-BROKER = "127.0.0.1"   # local Mosquitto broker
+BROKER = "192.168.0.108"   # local Mosquitto broker
 PORT = 1883            # default MQTT port
 
 SUB_TOPICS = [
@@ -51,6 +51,10 @@ PUB_TOPICS = [
         'name': 'pub/mouth',
         'qos': 0,
     },
+    {
+        'name': 'pub/speak',
+        'qos': 0,
+    }, # 说话:下行 TTS 语音流(ESP32 订阅播放)
     {
         'name': 'pub/head',
         'qos': 0,
