@@ -36,6 +36,7 @@ class SpeakWorker:
 
     async def run(self):
         # 消费者型 worker：get() 阻塞等待，与 eq12 的 worker 循环完全同构
+        print('[speak] 已启动')
         try:
             while True:
                 msg = await self.queues['pub/speak'].get()

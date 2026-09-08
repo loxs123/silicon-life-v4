@@ -55,6 +55,7 @@ pub/speak 主题的 ESP32 端。
 """
 
 import os
+import array
 import base64
 import threading
 import time
@@ -84,6 +85,24 @@ TTS_SPEED = 1.2          # 语速倍率:范围 0.5~2.0(1.0 为正常语速)
 CONNECT_TIMEOUT = 6.0    # 建连(含后台预热)最长等待秒数
 SENTENCE_TIMEOUT = 30.0  # 单句合成超时秒数,防网络异常导致永久卡住
 
+# ---------- 下行音量(数字衰减,在这里做) ----------
+# int16 PCM 每样本右移 VOLUME_DIV 位,每移 1 位 = -6dB:
+#   div=1 原声(0dB) | div=2 = 1/4(-12dB) | div=3 = 1/8(-18dB) | div=4 = 1/16(-24dB)
+# ESP32 端只做裸播放,音量统一在这里压好再发 pub/speak。
+# MAX98357 GAIN 脚悬空时增益偏高,实测声音过大 → 默认 1/8 音量(-18dB);
+# 听感太大 → div 加 1,太小 → div 减 1。
+VOLUME_DIV = 4
+
+
+def _attenuate(pcm: bytes, div: int) -> bytes:
+    """int16 PCM 数字衰减:每样本右移 div 位(负数自动保留符号)。"""
+    if div <= 1:
+        return pcm
+    a = array.array('h', pcm)          # 'h' = int16,本机小端与 PCM 一致
+    for i in range(len(a)):
+        a[i] >>= div
+    return a.tobytes()
+
 
 class Callback(QwenTtsRealtimeCallback):
     """一次 TTS 会话的回调:把流式 PCM 逐段转发给出站队列 pub/speak。
@@ -112,7 +131,8 @@ class Callback(QwenTtsRealtimeCallback):
             if type_ == 'response.audio.delta':
                 if self.first_audio_at is None:
                     self.first_audio_at = time.perf_counter()
-                pcm = base64.b64decode(response['delta'])
+                pcm = _attenuate(base64.b64decode(response['delta']),
+                                 VOLUME_DIV)
                 # 放进 pub/speak 出站队列,专职发送线程会发布给 ESP32
                 self.worker.queues[OUTPUT_QUEUE].put(pcm)
                 self.sent_bytes += len(pcm)
