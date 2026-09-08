@@ -1,3 +1,5 @@
+from __future__ import annotations   # 延迟求值注解:Callback 里可前向引用后定义的 EarWorker
+
 from queue import Queue
 import os
 import sys

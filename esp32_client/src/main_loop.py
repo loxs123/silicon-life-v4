@@ -27,6 +27,7 @@ from .mqtt import AsyncMQTT
 from .workers import EarWorker, SpeakWorker
 
 _STOP = object()   # 停机哨兵：stop() 投进队列，消费者 get() 到即退出（同 eq12）
+_ACTIVE = False    # 防重复启动：同一进程内只允许一个 MainLoop.run() 在跑
 
 
 class _Msg:
@@ -55,6 +56,13 @@ class _Queue:
             self._items.pop(0)          # 满：丢最旧，保新鲜
         self._items.append(item)
         self._evt.set()
+
+    def drain(self):
+        """丢空队列积压（回声抑制：b'stop' 时清掉 pub/speak 未播缓冲）。
+
+        不置/不清事件：get() 的 while 循环会自然重新等待，不会丢唤醒。
+        """
+        self._items = []
 
     async def get(self):
         while not self._items:
@@ -95,7 +103,17 @@ class MainLoop:
 
     # ------------------------------------------------------------- 生命周期
     async def run(self):
-        """启动全部任务并阻塞运行；stop() 后干净退出（对应 eq12 的 run()）。"""
+        """启动全部任务并阻塞运行；stop() 后干净退出（对应 eq12 的 run()）。
+
+        防重复启动：同一块板子上若已有 MainLoop 在跑（REPL 里重复 paste、
+        或残留实例没停），直接拒绝并提示——两个实例用同一 client_id 连
+        broker 会互踢，症状就是"连上→断开"无限循环。
+        """
+        global _ACTIVE
+        if _ACTIVE:
+            print('[MainLoop] 已在运行，忽略重复启动（先 Ctrl+C / 复位停掉旧的）')
+            return
+        _ACTIVE = True
         for t in self.sub_topics:
             self.mqtt.subscribe(t['name'], qos=t['qos'])
 
@@ -113,6 +131,7 @@ class MainLoop:
             raise                                       # Ctrl+C：交给 finally 收尾
         finally:
             await self.stop()                           # 兜底：无论怎么退出都停干净
+            _ACTIVE = False
 
     async def stop(self):
         """优雅停机（幂等）：哨兵入队 → 等任务自然退出 → 超时取消（同 eq12 的 join

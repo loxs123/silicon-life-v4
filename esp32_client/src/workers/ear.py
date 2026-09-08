@@ -23,7 +23,7 @@ class EarWorker:
         self.queues = queues
         self.stop_token = stop_token
         self._enabled = True
-        self._buf = bytearray(config.CHUNK)
+        self._buf = bytearray(config.MIC_CHUNK)
 
         mic = config.MIC
         self.i2s = machine.I2S(
@@ -34,7 +34,7 @@ class EarWorker:
             mode=machine.I2S.RX,
             bits=16,
             format=machine.I2S.MONO,
-            rate=config.RATE,
+            rate=config.MIC_RATE,
             ibuf=config.I2S_IBUF,
         )
 
@@ -56,13 +56,22 @@ class EarWorker:
             self.i2s.deinit()
 
     async def _control(self):
-        """消费 pub/ear 采集指令：与 eq12 的 worker 同款 get() 循环。"""
+        """消费 pub/ear 采集指令（b'stop'/b'start'，回声抑制协议）。
+
+        协议来源：eq12 SpeakWorker 出声前推 b'stop'、句毕推 b'start'（try/finally
+        保证任何路径都会恢复）。eq12 注释还要求 ESP32 端二选一：
+          a) stop 前已到的音频先缓存、start 后再播；或
+          b) 收到 stop 后清空未播缓冲
+        这里实现 b)：b'stop' 一到立刻停采并丢空 pub/speak 队列里没播的旧音频，
+        防停采前已到达的 TTS 在静音后还继续播（内存也不够做 a) 的整句缓存）。
+        """
         q = self.queues['pub/ear']
         while True:
             msg = await q.get()
             if self.stop_token is not None and msg is self.stop_token:
                 break
-            if msg.payload == b'start':
-                self._enabled = True
-            elif msg.payload == b'stop':
+            if msg.payload == b'stop':
                 self._enabled = False
+                self.queues['pub/speak'].drain()   # 回声抑制：丢未播缓冲
+            elif msg.payload == b'start':
+                self._enabled = True

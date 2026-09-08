@@ -27,6 +27,6 @@ async def _main():
 
 if __name__ == '__main__':
     try:
-        asyncio.run(_main())
+        asyncio.run(MainLoop().run())
     except KeyboardInterrupt:
         print('\n[main] Ctrl+C，退出')

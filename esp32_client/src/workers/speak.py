@@ -3,7 +3,8 @@
 与 eq12_server 的对应关系：
     eq12_server 的 SpeakWorker 把 TTS 语音发布到 pub/speak；
     本 worker 是它的"下游半身"——收到下行裸 PCM 音频逐块喂喇叭。
-    采样率/位深/声道与 config.RATE 约定一致（16k/16bit/mono）。
+    采样率/位深/声道与 config.SPK_RATE 约定一致（24k/16bit/mono，见 config.py
+    注释：下行 TTS 是 24kHz，与上行 ASR 的 16kHz 不同）。
 """
 try:
     import asyncio
@@ -29,7 +30,7 @@ class SpeakWorker:
             mode=machine.I2S.TX,
             bits=16,
             format=machine.I2S.MONO,
-            rate=config.RATE,
+            rate=config.SPK_RATE,
             ibuf=config.I2S_IBUF,
         )
 
@@ -41,11 +42,11 @@ class SpeakWorker:
                 if self.stop_token is not None and msg is self.stop_token:
                     break
                 data = msg.payload
-                # 下行块可能很大，拆成 config.CHUNK 小块喂 I2S，
+                # 下行块可能很大，拆成 config.SPK_CHUNK 小块喂 I2S，
                 # 块间让出调度，避免长时间占死事件循环
-                for off in range(0, len(data), config.CHUNK):
+                for off in range(0, len(data), config.SPK_CHUNK):
                     try:
-                        self.i2s.write(data[off:off + config.CHUNK])
+                        self.i2s.write(data[off:off + config.SPK_CHUNK])
                     except OSError:
                         break               # 喇叭异常：丢这一整块
                     await asyncio.sleep(0.001)

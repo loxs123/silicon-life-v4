@@ -62,6 +62,7 @@ from src.main_loop import MainLoop  # noqa: E402
 from tests.smoke_mqtt import FakeBroker  # noqa: E402
 
 from src.mqtt import _encode_str, _encode_varint  # noqa: E402
+from src import config  # noqa: E402
 
 
 async def wait_until(pred, timeout=6.0, what='condition'):
@@ -90,7 +91,7 @@ async def main():
         await wait_until(lambda: len(broker.rx_pub) >= 3,
                          what='broker 收到 >=3 条上行')
         assert {t for t, _ in broker.rx_pub} == {'sub/ear'}
-        assert all(len(p) == 640 for _, p in broker.rx_pub), \
+        assert all(len(p) == config.MIC_CHUNK for _, p in broker.rx_pub), \
             [len(p) for _, p in broker.rx_pub[:3]]
 
         # ---- 3) SpeakWorker：下行 2000B 全部写进 I2S 桩 ----

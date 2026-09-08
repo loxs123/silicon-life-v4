@@ -10,7 +10,7 @@ eq12_server 里的 SUB_TOPICS / PUB_TOPICS 是"服务器视角"的订阅/发布�
 # ---------- broker ----------
 BROKER = "192.168.0.108"   # EQ12 主机（mosquitto）的局域网 IP
 PORT = 1883
-CLIENT_ID = "esp32-ear"    # 每台设备唯一；重连时靠它续会话/顶掉旧连接
+CLIENT_ID = "esp32-ear-7f3a"    # 唯一 client id（曾与其它实例/脚本撞 id 互踢）
 KEEPALIVE = 60             # 秒；引擎会以 keepalive/2 周期发 PINGREQ 保活
 
 # ---------- 主题（器官端视角） ----------
@@ -43,13 +43,19 @@ Q_CAP = {
     'sub/ear': OUT_Q_MAX,
 }
 
-# ---------- 音频（16kHz / 16bit / 单声道 裸 PCM，需与 EQ12 ASR/TTS 对齐） ----------
-RATE = 16000
-CHUNK = 640          # 一块的字节数：640B = 20ms @ 16k mono16
-I2S_IBUF = 8192      # I2S DMA 缓冲字节数（约 256ms 音频，兜底调度抖动）
+# ---------- 音频（裸 PCM；格式须与 eq12_server 两侧服务对齐） ----------
+# 上行麦克风 → EQ12 的 ASR(dashscope)：16kHz / 16bit / mono
+MIC_RATE = 16000
+MIC_CHUNK = 640          # 640B = 20ms @ 16k mono16
+# 下行喇叭 ← EQ12 的 TTS(qwen3-tts)：24kHz / 16bit / mono —— 该模型固定输出，
+# 见 eq12_server/src/workers/speak_worker.py 的"下行音频格式契约"。两个方向
+# 采样率不同，必须分开配！
+SPK_RATE = 24000
+SPK_CHUNK = 960          # 960B = 20ms @ 24k mono16（I2S 写入分块粒度）
+I2S_IBUF = 8192          # I2S DMA 缓冲字节数（兜底调度抖动，约 170~250ms）
 
-# I2S 外设与引脚（按你的接线改）
-# 麦克风 INMP441 → I2S0（RX）
-MIC = {'id': 0, 'sck': 26, 'ws': 25, 'sd': 34}
-# 喇叭 MAX98357A → I2S1（TX）
-SPK = {'id': 1, 'sck': 27, 'ws': 14, 'sd': 33}
+# I2S 外设与引脚（ESP32-S3-CAM，见 docs/引脚分配与接线.md）
+# 麦克风 INMP441 → I2S0（RX）：SCK=GPIO14 / WS=GPIO1 / SD=GPIO2
+MIC = {'id': 0, 'sck': 14, 'ws': 1, 'sd': 2}
+# 喇叭 MAX98357 → I2S1（TX）：BCLK=GPIO42 / LRC=GPIO41 / DIN=GPIO21
+SPK = {'id': 1, 'sck': 42, 'ws': 41, 'sd': 21}
