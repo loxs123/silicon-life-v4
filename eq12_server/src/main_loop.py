@@ -17,7 +17,7 @@ import threading
 import paho.mqtt.client as mqtt
 
 from .config import BROKER, PORT, PUB_TOPICS, SUB_TOPICS
-from .workers import EarWorker, BrainWorker, SpeakWorker
+from .workers import EarWorker, BrainWorker, SpeakWorker, FeishuWorker
 
 _STOP = object()   # 停机哨兵：stop() 投进 pub/*、sub/* 队列，消费者 get() 到即退出
 
@@ -38,6 +38,11 @@ class MainLoop:
         # 内部流水线队列：不直接对应 MQTT 主题（如 ASR 文本 -> TTS 语音）
         self.queues['asr'] = queue.Queue()
         self.queues['tts'] = queue.Queue()
+        # 飞书网关内部队列（收发消息，进程内直连飞书 OpenAPI，不经 MQTT）。
+        # 名称带 '_' 前缀：纯内部队列，不被当作 MQTT 主题，也不会被
+        # stop() 哨兵（只看 'pub/'、'sub/' 前缀）或专职发送线程接管。
+        self.queues[FeishuWorker.SUB_QUEUE] = queue.Queue()   # 收：收到消息入队
+        self.queues[FeishuWorker.PUB_QUEUE] = queue.Queue()   # 发：出站消息队列
 
         self.qos = {t['name']: t['qos'] for t in SUB_TOPICS + PUB_TOPICS}
 
@@ -46,7 +51,8 @@ class MainLoop:
         ear = EarWorker(self.queues, stop_token=_STOP)
         brain = BrainWorker(self.queues, stop_token=_STOP)
         speak = SpeakWorker(self.queues, stop_token=_STOP)
-        self._worker_runs = [ear.run, brain.run, speak.run]
+        feishu = FeishuWorker(self.queues, stop_token=_STOP)
+        self._worker_runs = [ear.run, brain.run, speak.run, feishu.run]
 
         self._threads: list[threading.Thread] = []
         self._running = False

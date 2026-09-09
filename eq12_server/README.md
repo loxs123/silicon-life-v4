@@ -59,7 +59,7 @@ ASR 等加工，结果写入目标器官的出站队列（如 `pub/brain`），�
 依赖：Python ≥ 3.10、`paho-mqtt`、本机已运行 Mosquitto（默认 `127.0.0.1:1883`）。
 
 ```bash
-pip install paho-mqtt
+pip install paho-mqtt dashscope lark-oapi
 
 # 终端 1：启动 broker（以 Windows 为例）
 mosquitto -v
@@ -69,6 +69,9 @@ python run.py          # 或 python -m src.main_loop
 
 # Ctrl+C 干净退出：断开 broker → 线程收尾（哨兵）→ join
 ```
+
+> 飞书凭据（FEISHU_APP_ID / FEISHU_APP_SECRET）与 DashScope Key 一起放在
+> 仓库根的 `set_dashscope_env.cmd`（该文件已被 gitignore，勿提交）。
 
 ## 3. 代码结构
 
@@ -80,7 +83,10 @@ eq12_server/
     ├── main_loop.py        # 框架主体：队列、线程、生命周期、mqtt 回调、_STOP 哨兵
     └── workers/
         ├── __init__.py     # worker 统一导出
-        └── ear_worker.py   # 示例器官 worker（ASR 尚未实现，TODO）
+        ├── ear_worker.py   # 示例器官 worker（ASR 尚未实现，TODO）
+        ├── brain_worker.py # 大脑：asr 文本 → 流式 LLM → tts
+        ├── speak_worker.py # 嘴：tts 文本 → 流式 TTS → pub/speak
+        └── feishu_worker.py# 飞书网关：长连接收发文字/图片（见 §6）
 ```
 
 ---
@@ -102,7 +108,7 @@ MainLoop()
                 → 断开 broker → join 各线程（超时兜底）
 ```
 
-- **`__init__` 不做网络操作**：因此可以脱离真实 broker 单独测试（见 §6）。
+- **`__init__` 不做网络操作**：因此可以脱离真实 broker 单独测试（见 §7）。
 - **`stop()` 幂等**，可从任意线程调用；`run()` 的 `finally` 里兜底执行。
 - **停机协议**：`_STOP = object()` 哨兵由 `stop()` 只投给 **`pub/`、`sub/` 前缀**
   的队列（这两类队列各有固定消费者，拿到哨兵即退出）；`asr`/`tts` 内部队列不投，
@@ -151,7 +157,49 @@ MainLoop()
 
 ---
 
-## 6. 不连 broker 的测试
+## 6. 飞书网关 worker（FeishuWorker）
+
+飞书是「远程聊天口」：用户在飞书里给机器人发消息，机器人回复（文字/图片）。
+与 ESP32 器官不同，飞书不走 MQTT —— `FeishuWorker` 在 eq12_server 进程内用官方
+`lark-oapi` SDK 直连飞书 OpenAPI（WebSocket 长连接收事件、HTTPS 发消息），
+收发各配一条**内部队列**（`src/main_loop.py` 里与 asr/tts 同级创建，名称带
+`_` 前缀表示纯内部队列：不是 MQTT 主题，`stop()` 的 pub/*、sub/* 哨兵与
+专职发送线程都不会碰它）：
+
+| 队列 | 方向 | 内容 |
+|---|---|---|
+| `_sub/feishu` | **收**：长连接收到用户消息 → 打包 dict 入队 | 下游（大脑/桥接）从这里消费 |
+| `_pub/feishu` | **发**：大脑/上游把出口消息放进此队列 → 本 worker 消费并调用飞书 API 发出 | 文字回复 / 主动发图 |
+
+载荷协议（沿用 v3 `actors/feishu.py` 的 mailbox 协议，决策统一在 brain）：
+
+```python
+# _sub/feishu 里的 dict（收到用户消息）
+{'feishu': True, 'text': '你好', 'message_id': 'om_...',
+ 'chat_id': 'oc_...', 'sender': 'ou_...'}
+{'feishu': True, 'type': 'image', 'image_key': 'img_v2_...',
+ 'message_id': 'om_...', 'chat_id': 'oc_...', 'sender': 'ou_...'}
+
+# 往 _pub/feishu 放这些，即触发发送
+'[FEISHU]:<message_id>|<回复文字>'          # 在该消息下回复文字
+{'img': '<base64 JPEG>', 'chat_id': 'oc_...'}   # 给会话主动发图（如 <cam> 拍照结果；
+                                          #   chat_id 缺省时发给最近会话）
+```
+
+- **依赖/凭据**：`pip install lark-oapi`；`FEISHU_APP_ID` / `FEISHU_APP_SECRET`
+  放在仓库根 `set_dashscope_env.cmd`（已被 gitignore）。lark-oapi 未安装或凭据
+  缺失时该 worker 只打印提示即退出，不影响其余链路。
+- **当前边界**：收到消息只入队 + 打日志，**决策尚未接线** —— BrainWorker 还只
+  消费内部 `asr` 队列（语音链路），还没消费 `_sub/feishu`、也没往 `_pub/feishu`
+  写回复；本步只搭好"飞书口"。收到图片也只记录 image_key，视觉识别/按 key
+  下载留待以后。
+- **生命周期**：两条内部队列不吃 `_STOP` 哨兵，长连接线程与主循环是 daemon，
+  随进程退出（与消费 asr/tts 的 worker 一致）；`FeishuWorker.close()` 幂等、
+  随时可调，用于主动停长连接。
+
+---
+
+## 7. 不连 broker 的测试
 
 `start()` 不连接网络，`MainLoop(broker=..., client=...)` 可注入假 client：
 
@@ -188,9 +236,11 @@ assert not any(t.is_alive() for t in loop._threads)
 
 ---
 
-## 7. 当前状态与已知边界
+## 8. 当前状态与已知边界
 
 - [x] 框架主体：队列路由、专职发送线程、生命周期、优雅停机
+- [x] FeishuWorker 飞书网关：长连接收发文字/图片，`_sub/feishu` 入队 /
+      `_pub/feishu` 出队（brain 接线待做，见 §6）
 - [ ] `EarWorker` 的 ASR 尚未实现（TODO）
 - [ ] `esp32_client` 器官端已实现 ear/speak/eye/leg/face（见其 README）；本端
       `sub/eye`（照片）、`pub/eye`/`pub/leg`/`pub/face`（触发看/动/表情）的消费与触发 worker 待接

@@ -101,6 +101,9 @@ python run.py                     # 在 eq12_server/ 下
 - [x] esp32 端「眼睛」拍照链路：`pub/eye`(b'photo') → OV3660 拍一张 → `sub/eye`(JSON+base64)
 - [x] esp32 端「腿」串行动作执行器：`pub/leg` 文本指令 → PCA9685 云台舵机 + DRV8833 底盘电机
 - [x] esp32 端「脸」表情屏：`pub/face` 文本指令 → ST7789（idle/listen/think/speak/happy/sleep + 眨眼动画）
+- [x] eq12 端「飞书」网关：`FeishuWorker` 直连飞书 OpenAPI 收发文字/图片
+      （`_sub/feishu` 收、`_pub/feishu` 发，进程内队列不经 MQTT；凭据放
+      `set_dashscope_env.cmd`）—— brain 消费/回写接线待做（见 eq12_server/README §6）
 - [ ] eq12 端消费 `sub/eye`（视觉大模型/飞书/存卡）+ 触发 `pub/eye`/`pub/leg`/`pub/face`（大脑主动想看/想动/换表情）—— 待接
 - [ ] 4G(Cat.1) 场景 / 更多器官（head…）—— 待扩展
 
