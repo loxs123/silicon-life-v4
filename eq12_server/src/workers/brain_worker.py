@@ -49,40 +49,6 @@ MAX_HISTORY = 12      # 保留的最近对话条数(不含 system)
 REPLY_TIMEOUT = 60.0  # 单次回复最长等待秒数,防网络异常导致永久卡住
 SENT_END = re.compile(r'[。！？!?]')   # 句末标点:流式输出里凑到它就切一句送给 TTS
 
-_RECENT_SPOKEN = []   # 最近自己送出去说的句子 (送说时刻, 文本); 用来过滤回声
-_ECHO_WINDOW = 12.0   # 秒:这段时间内识别到"自己说过的话的片段"视为回声丢弃
-_ECHO_MAX_KEEP = 12   # 最多保留多少条最近说过的话
-
-
-def _is_echo(text: str) -> bool:
-    """识别文本是否是"自己刚说过的话"的片段(回声自答)。
-
-    机器人说话时 ESP32 麦克风可能录到喇叭声,ASR 会把句子尾巴识别回来,
-    若不加过滤就会无限自答。判断:文本与 _RECENT_SPOKEN 中某句互为子串
-    (长度≥3) 且在时间窗内 → 判定为回声。
-    """
-    text = text.strip()
-    if len(text) < 3:
-        return False
-    now = time.time()
-    for ts, spoken in _RECENT_SPOKEN:
-        if now - ts > _ECHO_WINDOW:
-            continue
-        if len(spoken) >= 3 and (text in spoken or spoken in text):
-            return True
-    return False
-
-
-def _remember_spoken(text: str):
-    """记录一句自己刚送出去说的话(供 _is_echo 过滤回声)。"""
-    now = time.time()
-    _RECENT_SPOKEN.append((now, text))
-    # 只留时间窗内 + 上限条数
-    while len(_RECENT_SPOKEN) > _ECHO_MAX_KEEP or (
-            _RECENT_SPOKEN and now - _RECENT_SPOKEN[0][0] > _ECHO_WINDOW * 2):
-        _RECENT_SPOKEN.pop(0)
-
-
 class BrainWorker:
     """消费 asr 队列的文本,流式调用模型,把完整句子逐句投进 tts 队列。
 
@@ -108,9 +74,6 @@ class BrainWorker:
             text = str(text).strip()
             if not text:
                 continue
-            if _is_echo(text):      # 自己说的话被麦克风录回来 → 丢弃,不接话
-                print('[Brain] 忽略疑似回声: %s' % text, flush=True)
-                continue
             self._reply(text)   # 阻塞到整段回复生成完;内部全兜底,不外抛
 
     # ------------------------------------------------------- 回复一句
@@ -123,7 +86,6 @@ class BrainWorker:
             for sent in self._stream_sentences():
                 sentences.append(sent)
                 self.queues[OUTPUT_QUEUE].put(sent)
-                _remember_spoken(sent)      # 记下自己说过的,供回声过滤
                 print('[Brain] → %s (%d 字,成句即送)'
                       % (sent[:60], len(sent)), flush=True)
         except Exception as e:
@@ -173,7 +135,6 @@ class BrainWorker:
                     break
                 sent = buf[:m.end()].strip()
                 buf = buf[m.end():]
-                # 纯符号/emoji 片段(如 "😄，")没有可说的内容,单独送 TTS 会失败
                 if sent and any(ch.isalnum() for ch in sent):
                     yield sent
         print(flush=True)   # 收尾:结束上面行内流式打印
