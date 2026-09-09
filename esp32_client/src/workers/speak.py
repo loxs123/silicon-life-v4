@@ -3,8 +3,14 @@
 与 eq12_server 的对应关系：
     eq12_server 的 SpeakWorker 把 TTS 语音发布到 pub/speak；
     本 worker 是它的"下游半身"——收到下行裸 PCM 音频逐块喂喇叭。
-    采样率/位深/声道与 config.SPK_RATE 约定一致（24k/16bit/mono，见 config.py
-    注释：下行 TTS 是 24kHz，与上行 ASR 的 16kHz 不同）。
+
+播放要点（经验来自 v3 的 src/actors/speaker.py，ESP32 实测）：
+  * 写块粒度 ~31ms（config.SPK_CHUNK），块太小写调用过密反而卡/刺啦；
+  * DMA 起播预热：每段播放开始时 DMA 缓冲是空的，若从第一块起就边写边
+    让出，调度一忙就欠载 → 开头"卡卡/刺啦"。冷启动先一次性灌入约 0.3s
+    音频（写满 DMA 空缓冲几乎不阻塞），再逐块写 + sleep(0) 让出；
+  * 块间用 sleep(0) 纯让出事件循环，不用 sleep(ms) 制造人工间隙。
+音量衰减在 EQ12 端做（speak_worker 的 VOLUME_DIV），这里只裸播。
 """
 try:
     import asyncio
@@ -15,12 +21,15 @@ import machine
 
 from .. import config
 
+DMA_WARM_BYTES = 15360      # 起播预热量 ≈ 0.32s @ 24k（约等于 ibuf 16384，参考 v3）
+
 
 class SpeakWorker:
     def __init__(self, queues, stop_token=None, echo=None):
         self.queues = queues
         self.stop_token = stop_token
-        self.echo = echo               # 共享回声闸；收到音频时刷新活动时间
+        self.echo = echo               # 共享回声闸；播完刷新活动时间
+        self._cold = True              # 下一段是"冷启动"（DMA 空）→ 需预热
 
         spk = config.SPK
         self.i2s = machine.I2S(
@@ -37,23 +46,38 @@ class SpeakWorker:
 
     async def run(self):
         # 消费者型 worker：get() 阻塞等待，与 eq12 的 worker 循环完全同构
-        print('[speak] 已启动')
+        print('[speak] 已启动（音量在 EQ12 端控制）')
         try:
             while True:
                 msg = await self.queues['pub/speak'].get()
                 if self.stop_token is not None and msg is self.stop_token:
                     break
                 data = msg.payload
-                # 下行块可能很大，拆成 config.SPK_CHUNK 小块喂 I2S，
-                # 块间让出调度，避免长时间占死事件循环
-                for off in range(0, len(data), config.SPK_CHUNK):
+                off = 0
+
+                # 1) 冷启动预热：空 DMA 一次性灌 ~0.3s，防起播欠载爆音
+                if self._cold and data:
+                    pre = data[:DMA_WARM_BYTES]
+                    try:
+                        self.i2s.write(pre)
+                        off = len(pre)
+                    except OSError:
+                        off = 0              # 失败就退回正常逐块写
+                    self._cold = False
+
+                # 2) 逐块写（~31ms/块），每块写完让出事件循环
+                while off < len(data):
                     try:
                         self.i2s.write(data[off:off + config.SPK_CHUNK])
                     except OSError:
-                        break               # 喇叭异常：丢这一整块
-                    await asyncio.sleep(0.001)
+                        break                # 喇叭异常：丢这一整块
+                    off += config.SPK_CHUNK
+                    await asyncio.sleep(0)   # 纯让出，不制造人工间隙
+
+                # 3) 队列已空 → 下一条消息按冷启动处理（预热一次）
+                if self.queues['pub/speak'].qsize() == 0:
+                    self._cold = True
                 if self.echo is not None:
-                    # 这一条播完了：ear 据此在"队列空 + 静默够久"后才恢复上行
-                    self.echo.mark_played()
+                    self.echo.mark_played()  # 播完：ear 据此延后恢复上行
         finally:
             self.i2s.deinit()

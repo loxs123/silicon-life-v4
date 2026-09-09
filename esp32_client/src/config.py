@@ -35,7 +35,10 @@ QOS = {t['name']: t['qos'] for t in SUB_TOPICS + PUB_TOPICS}
 
 # ---------- 协程队列水位（满则丢最旧，防 OOM；流式音频保新鲜） ----------
 OUT_Q_MAX = 32      # sub/ear 出站队列：32 块 × 640B ≈ 0.6s 音频
-SPEAK_Q_MAX = 8     # pub/speak 入站队列：下行 TTS 突发时丢最旧
+# pub/speak 入站队列：下行 TTS 必须"按序播完"，不能为了保新鲜丢旧音频——
+# 上限给大（512 条；若每块平均 ~6KB ≈ 3MB，PSRAM 足够），只在极端异常下
+# 丢最旧兜底，正常播放绝不抢占/跳句。
+SPEAK_Q_MAX = 512
 CMD_Q_MAX = 4       # pub/ear 指令队列
 Q_CAP = {
     'pub/ear': CMD_Q_MAX,
@@ -56,8 +59,10 @@ MIC_CHUNK = 640          # 640B = 20ms @ 16k mono16
 # 见 eq12_server/src/workers/speak_worker.py 的"下行音频格式契约"。两个方向
 # 采样率不同，必须分开配！
 SPK_RATE = 24000
-SPK_CHUNK = 960          # 960B = 20ms @ 24k mono16（I2S 写入分块粒度）
-I2S_IBUF = 8192          # I2S DMA 缓冲字节数（兜底调度抖动，约 170~250ms）
+# 写块粒度 ≈ 31ms（48000B/s ÷ 32，参考 v3 speaker.py：块太小写调用过密反而卡）
+SPK_CHUNK = 1500
+# DMA 缓冲：v3 实测 16384 抗抖最优；过大(32768)反而更糟
+I2S_IBUF = 16384
 
 # I2S 外设与引脚（ESP32-S3-CAM，见 docs/引脚分配与接线.md）
 # 麦克风 INMP441 → I2S0（RX）：SCK=GPIO14 / WS=GPIO1 / SD=GPIO2
