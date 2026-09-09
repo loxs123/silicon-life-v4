@@ -96,16 +96,31 @@ silicon-life-v4/
 
 > 方向图例：**上行** = ESP32 发布、EQ12 订阅（`sub/*`）；**下行** = EQ12 发布、ESP32 订阅（`pub/*`）。
 
-| 主题 | 方向 | 载荷 | 生产者 | 消费者 |
+| 主题 | 方向 | 载荷（概要） | 生产者 | 消费者 |
 |---|---|---|---|---|
-| `sub/ear` | EQ12 ← ESP32（上行） | 裸 PCM **16kHz / 16bit / mono**（原始麦克风） | ESP32 EarWorker | eq12 EarWorker(ASR) |
-| `pub/speak` | EQ12 → ESP32（下行） | 裸 PCM **24kHz / 16bit / mono**（TTS 输出） | eq12 SpeakWorker(TTS) | ESP32 SpeakWorker |
-| `pub/ear` | EQ12 → ESP32（下行） | `b'stop'` / `b'start'`（采集启停，回声抑制） | eq12 SpeakWorker | ESP32 EarWorker |
-| `pub/eye` | EQ12 → ESP32（下行） | `b'photo'`（拍照指令，一指令一张） | eq12（大脑，待接） | ESP32 CameraWorker |
-| `sub/eye` | EQ12 ← ESP32（上行） | UTF-8 JSON：`{"type":"photo","time":...,"size":n,"width":W,"height":H,"data":"<base64 JPEG>"}` | ESP32 CameraWorker | eq12（视觉理解/转发，待接） |
-| `pub/leg` | EQ12 → ESP32（下行） | UTF-8 文本指令（同 v3 move）：`forward,50,2` / `pan,90` / `stop` / `center`… | eq12（大脑，待接） | ESP32 MoveWorker |
-| `sub/leg` | EQ12 ← ESP32（上行） | UTF-8 文本完成回执：`done:<指令>`（如 `done:forward,50,2` / `done:pan,90`，说明刚完成哪条） | ESP32 MoveWorker | eq12（大脑，待接） |
-| `pub/face` | EQ12 → ESP32（下行） | UTF-8 文本指令（同 v3 screen）：`speak` / `happy` / `sleep`（可带 `[SCR]:` 前缀） | eq12（大脑，待接） | ESP32 ScreenWorker |
+| `sub/ear` | ESP32 发布 → EQ12 订阅（上行） | 裸 PCM（16k / 16bit / mono） | ESP32 EarWorker | eq12 EarWorker(ASR) |
+| `pub/speak` | EQ12 发布 → ESP32 订阅（下行） | 裸 PCM（24k / 16bit / mono） | eq12 SpeakWorker(TTS) | ESP32 SpeakWorker |
+| `pub/ear` | EQ12 发布 → ESP32 订阅（下行） | `b'stop'` / `b'start'` | eq12 SpeakWorker | ESP32 EarWorker |
+| `pub/eye` | EQ12 发布 → ESP32 订阅（下行） | `b'photo'` | eq12（大脑，待接） | ESP32 CameraWorker |
+| `sub/eye` | ESP32 发布 → EQ12 订阅（上行） | JSON 信封 + base64 JPEG | ESP32 CameraWorker | eq12（视觉理解/转发，待接） |
+| `pub/leg` | EQ12 发布 → ESP32 订阅（下行） | UTF-8 文本指令（同 v3 move） | eq12（大脑，待接） | ESP32 MoveWorker |
+| `sub/leg` | ESP32 发布 → EQ12 订阅（上行） | UTF-8 文本回执 `done:<指令>` | ESP32 MoveWorker | eq12（大脑，待接） |
+| `pub/face` | EQ12 发布 → ESP32 订阅（下行） | UTF-8 文本表情名（同 v3 screen） | eq12（大脑，待接） | ESP32 ScreenWorker |
+
+**载荷格式明细**（上表"载荷（概要）"列的完整格式）：
+
+- `sub/ear` —— 裸 PCM **16kHz / 16bit / mono**，每块 640B（≈20ms），麦克风连续上行。
+- `pub/speak` —— 裸 PCM **24kHz / 16bit / mono**（⚠️ 与上行 16k 不同，勿混用）。
+- `pub/ear` —— `b'stop'`（停采 + 清未播缓冲）/ `b'start'`（恢复采集），回声抑制用。
+- `pub/eye` —— `b'photo'`；收到即拍一张，其它载荷忽略。
+- `sub/eye` —— UTF-8 JSON：`{"type":"photo","time":"YYYY-mm-dd HH:MM:SS","size":<JPEG 字节>,"width":W,"height":H,"data":"<base64 JPEG>"}`。
+- `pub/leg` —— UTF-8 文本指令：`forward,50,2` / `back,40` / `left,30` / `right,30,0.5` /
+  `pan,90` / `tilt,45` / `stop` / `center`；兼容 `[MOVE]:` 前缀与空格分隔
+  （时长参数支持 `3` / `1.5s` / `800ms` / `2秒`）。
+- `sub/leg` —— UTF-8 文本回执 `done:<规范化指令>`：如 `done:forward,50,2` / `done:pan,90` /
+  `done:center`；只回真做完的指令（协议详见 `esp32_client/src/workers/move.py` 文件头）。
+- `pub/face` —— UTF-8 文本表情名：`idle` / `listen` / `think` / `speak` / `happy` / `sleep`
+  （别名 `neutral` → `idle`；可带 `[SCR]:` 前缀，大小写不敏感）。
 
 > eq12 框架的 `config.py` 还预留了 `pub/brain`、`sub/brain`、`pub/mouth`、`sub/mouth` 占位主题（暂无生产者/消费者），后续按需启用。
 
