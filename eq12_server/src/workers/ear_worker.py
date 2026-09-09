@@ -3,6 +3,7 @@ from __future__ import annotations   # 延迟求值注解:Callback 里可前向�
 from queue import Queue
 import os
 import sys
+import time
 
 import dashscope
 from dashscope.audio.asr import Recognition, RecognitionCallback, RecognitionResult
@@ -56,7 +57,30 @@ class EarWorker:
         self.stop_token = stop_token
 
     def run(self):
-        # 2. 启动流式识别
+        # 持续把 sub/ear 音频送 ASR。dashscope 会话可能中途结束(空闲关闭/
+        # 云端错误/网络抖动),此时 send_audio_frame 会抛异常——不能让它杀死
+        # worker 线程,否则之后所有语音都不再被识别;要自动重建会话继续服务。
+        recognition = self._new_recognition()
+        while True:
+            item = self.queues['sub/ear'].get()
+            if self.stop_token is not None and item is self.stop_token:
+                break
+            sound = item.payload
+            try:
+                # 发送方向按协议约定：若大脑订阅 pub/brain 则写 self.queues['pub/brain']
+                recognition.send_audio_frame(sound)
+            except Exception as e:
+                # 会话已停/未就绪:丢当前帧,节流后重建(重启期间的语音会丢
+                # 一小段,但线程不会死,恢复后继续识别)
+                print('[ASR] 会话异常,自动重启识别: %s' % e, flush=True)
+                time.sleep(1.0)
+                try:
+                    recognition.stop()
+                except Exception:
+                    pass
+                recognition = self._new_recognition()
+
+    def _new_recognition(self):
         recognition = Recognition(
             model='qwen-audio-3.0-asr-flash-streaming',
             format=FORMAT,
@@ -65,10 +89,4 @@ class EarWorker:
             callback=Callback(self),
         )
         recognition.start()
-        while True:
-            item = self.queues['sub/ear'].get()
-            if self.stop_token is not None and item is self.stop_token:
-                break
-            sound = item.payload
-            # 发送方向按协议约定：若大脑订阅 pub/brain 则写 self.queues['pub/brain']
-            recognition.send_audio_frame(sound)
+        return recognition
