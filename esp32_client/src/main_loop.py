@@ -16,10 +16,18 @@
 
 esp32 端只承担两个器官：ear（麦克风上行）与 speak（下行 TTS 播放）。
 """
+import time
+
 try:
     import asyncio
 except ImportError:
     import uasyncio as asyncio
+
+# ticks_ms 是 MicroPython API；CPython（PC 冒烟测试）没有，用 monotonic 兜底
+try:
+    _ticks_ms = time.ticks_ms
+except AttributeError:
+    _ticks_ms = lambda: int(time.monotonic() * 1000)
 
 from .config import BROKER, PORT, CLIENT_ID, KEEPALIVE, QOS, Q_CAP
 from .config import PUB_TOPICS, SUB_TOPICS
@@ -28,6 +36,21 @@ from .workers import EarWorker, SpeakWorker
 
 _STOP = object()   # 停机哨兵：stop() 投进队列，消费者 get() 到即退出（同 eq12）
 _ACTIVE = False    # 防重复启动：同一进程内只允许一个 MainLoop.run() 在跑
+
+
+class _EchoGate:
+    """回声抑制联动闸：ear 与 speak 共享的"喇叭最近活动"状态。
+
+    SpeakWorker 每收到一块下行音频就刷新 last_spk；EarWorker 收到 b'start'
+    后要等喇叭静默 ≥ ECHO_GUARD_MS 才恢复上行（_echo_ok），避免录到
+    自己播放的缓冲尾巴 → 自答回声。
+    """
+
+    def __init__(self):
+        self.last_spk = 0        # 最近一次下行音频活动时刻（ticks_ms）
+
+    def mark_spk(self):
+        self.last_spk = _ticks_ms()
 
 
 class _Msg:
@@ -88,8 +111,11 @@ class MainLoop:
 
         # ---- worker 登记：新器官在这里加一行，run() 即统一启动（同 eq12 注释）----
         # esp32 无大脑：ear(采麦克风上行) / speak(下行 TTS 播放)
-        ear = EarWorker(self.queues, stop_token=_STOP)
-        speak = SpeakWorker(self.queues, stop_token=_STOP)
+        # 两者共享一个回声闸：speak 每收到音频就刷新 last_spk，
+        # ear 在 b'start' 后等喇叭静默够久才恢复上行（防自答回声）。
+        echo = _EchoGate()
+        ear = EarWorker(self.queues, stop_token=_STOP, echo=echo)
+        speak = SpeakWorker(self.queues, stop_token=_STOP, echo=echo)
         self._worker_runs = [ear.run, speak.run]
 
         self._tasks = []

@@ -14,14 +14,25 @@ except ImportError:
     import uasyncio as asyncio
 
 import machine
+import time
 
 from .. import config
 
+# ticks_ms/ticks_diff 是 MicroPython API；CPython（PC 冒烟测试）没有，
+# 用 monotonic 兜底，让同一份代码两端都能跑。
+try:
+    _ticks_ms = time.ticks_ms
+    _ticks_diff = time.ticks_diff
+except AttributeError:
+    _ticks_ms = lambda: int(time.monotonic() * 1000)
+    _ticks_diff = lambda a, b: a - b
+
 
 class EarWorker:
-    def __init__(self, queues, stop_token=None):
+    def __init__(self, queues, stop_token=None, echo=None):
         self.queues = queues
         self.stop_token = stop_token
+        self.echo = echo               # 共享回声闸（_EchoGate）；None=不启用
         self._enabled = True
         self._buf = bytearray(config.MIC_CHUNK)
 
@@ -38,6 +49,18 @@ class EarWorker:
             ibuf=config.I2S_IBUF,
         )
 
+    def _echo_ok(self):
+        """回声闸：喇叭已静默够久才允许上行（默认 ECHO_GUARD_MS=400ms）。
+
+        EQ12 在语音"发完"即发 b'start'，但喇叭缓冲尾巴可能还在播；
+        若立刻恢复上行会录到自己的声音。这里看 speak 最后一次活动的
+        时间戳（由 SpeakWorker 每次收到音频刷新），静默足够才放行。
+        """
+        if self.echo is None:
+            return True
+        now = _ticks_ms()
+        return _ticks_diff(now, self.echo.last_spk) >= config.ECHO_GUARD_MS
+
     async def run(self):
         ctl = asyncio.create_task(self._control())
         try:
@@ -48,7 +71,7 @@ class EarWorker:
                 except OSError:
                     await asyncio.sleep(0.01)   # 麦克风异常时别空转刷错误
                     continue
-                if self._enabled:
+                if self._enabled and self._echo_ok():
                     self.queues['sub/ear'].put_nowait(bytes(self._buf))
                 await asyncio.sleep(0)          # 让出：别饿死网络/播放任务
         finally:
@@ -59,11 +82,12 @@ class EarWorker:
         """消费 pub/ear 采集指令（b'stop'/b'start'，回声抑制协议）。
 
         协议来源：eq12 SpeakWorker 出声前推 b'stop'、句毕推 b'start'（try/finally
-        保证任何路径都会恢复）。eq12 注释还要求 ESP32 端二选一：
-          a) stop 前已到的音频先缓存、start 后再播；或
-          b) 收到 stop 后清空未播缓冲
-        这里实现 b)：b'stop' 一到立刻停采并丢空 pub/speak 队列里没播的旧音频，
-        防停采前已到达的 TTS 在静音后还继续播（内存也不够做 a) 的整句缓存）。
+        保证任何路径都会恢复）。
+        - b'stop'  → 停采。**不**清空 pub/speak 未播缓冲：EQ12 的 TTS 推流往往
+          快于实时播放，上一句可能还有几秒音频没播完，清空会把话说"掐断"；
+          残余音频在静音期播完即可（麦已停，不会录到自己）。
+        - b'start' → 置允许采集；真正恢复上行还要等回声闸（_echo_ok）放行，
+          即喇叭静默满 ECHO_GUARD_MS 之后。
         """
         q = self.queues['pub/ear']
         while True:
@@ -72,6 +96,5 @@ class EarWorker:
                 break
             if msg.payload == b'stop':
                 self._enabled = False
-                self.queues['pub/speak'].drain()   # 回声抑制：丢未播缓冲
             elif msg.payload == b'start':
                 self._enabled = True

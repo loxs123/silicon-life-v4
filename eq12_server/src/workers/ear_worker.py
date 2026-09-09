@@ -27,7 +27,14 @@ class Callback(RecognitionCallback):
         print('[ASR] 连接已关闭', flush=True)
 
     def on_error(self, result):
-        print('[ASR] 出错:', result, flush=True)
+        # dashscope 的 RecognitionResult.__str__ 偶尔缺 headers 属性会抛异常，
+        # 若让异常从这里冒出去，dashscope 的 ASR 接收线程会直接死掉(之后无法识别)。
+        # 这里兜底：能打印就打印，打印不了只报类型，绝不让线程挂。
+        try:
+            print('[ASR] 出错:', result, flush=True)
+        except Exception as e:
+            print('[ASR] 出错(结果无法打印, 类型 %s): %s'
+                  % (type(result).__name__, e), flush=True)
 
     def on_event(self, result: RecognitionResult):
         sentence = result.get_sentence()

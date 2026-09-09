@@ -17,9 +17,10 @@ from .. import config
 
 
 class SpeakWorker:
-    def __init__(self, queues, stop_token=None):
+    def __init__(self, queues, stop_token=None, echo=None):
         self.queues = queues
         self.stop_token = stop_token
+        self.echo = echo               # 共享回声闸；收到音频时刷新活动时间
 
         spk = config.SPK
         self.i2s = machine.I2S(
@@ -43,6 +44,8 @@ class SpeakWorker:
                 if self.stop_token is not None and msg is self.stop_token:
                     break
                 data = msg.payload
+                if self.echo is not None:
+                    self.echo.mark_spk()   # 喇叭有活动：ear 据此延后恢复上行
                 # 下行块可能很大，拆成 config.SPK_CHUNK 小块喂 I2S，
                 # 块间让出调度，避免长时间占死事件循环
                 for off in range(0, len(data), config.SPK_CHUNK):

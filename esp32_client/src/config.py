@@ -44,6 +44,11 @@ Q_CAP = {
 }
 
 # ---------- 音频（裸 PCM；格式须与 eq12_server 两侧服务对齐） ----------
+# 回声抑制恢复保护：EQ12 在整句语音"发完"时就发 b'start'，但 ESP32 喇叭
+# 可能还有缓冲尾巴在播。ear 收到 b'start' 后要等喇叭静默满 ECHO_GUARD_MS
+# 才恢复上行，避免录到自己声音造成自答循环。回声严重就调大、卡顿就调小。
+ECHO_GUARD_MS = 400
+
 # 上行麦克风 → EQ12 的 ASR(dashscope)：16kHz / 16bit / mono
 MIC_RATE = 16000
 MIC_CHUNK = 640          # 640B = 20ms @ 16k mono16
