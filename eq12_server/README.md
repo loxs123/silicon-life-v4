@@ -59,7 +59,7 @@ ASR 等加工，结果写入目标器官的出站队列（如 `pub/brain`），�
 依赖：Python ≥ 3.10、`paho-mqtt`、本机已运行 Mosquitto（默认 `127.0.0.1:1883`）。
 
 ```bash
-pip install paho-mqtt dashscope lark-oapi
+pip install -r ../requirements.txt    # 或按需单装: pip install paho-mqtt dashscope lark-oapi pyautogui
 
 # 终端 1：启动 broker（以 Windows 为例）
 mosquitto -v
@@ -72,6 +72,8 @@ python run.py          # 或 python -m src.main_loop
 
 > 飞书凭据（FEISHU_APP_ID / FEISHU_APP_SECRET）与 DashScope Key 一起放在
 > 仓库根的 `set_dashscope_env.cmd`（该文件已被 gitignore，勿提交）。
+> `pyautogui`（含截屏所需的 Pillow）是 DesktopWorker 运行桌面键鼠/截屏用的，
+> 不需要桌面操作时可去掉。
 
 ## 3. 代码结构
 
@@ -86,7 +88,8 @@ eq12_server/
         ├── ear_worker.py   # 示例器官 worker（ASR 尚未实现，TODO）
         ├── brain_worker.py # 大脑：asr 文本 → 流式 LLM → tts
         ├── speak_worker.py # 嘴：tts 文本 → 流式 TTS → pub/speak
-        └── feishu_worker.py# 飞书网关：长连接收发文字/图片（见 §6）
+        ├── feishu_worker.py# 飞书网关：长连接收发文字/图片（见 §6.1）
+        └── desktop_worker.py# 桌面操作：键鼠/滚轮/截屏（见 §6.2）
 ```
 
 ---
@@ -157,14 +160,18 @@ MainLoop()
 
 ---
 
-## 6. 飞书网关 worker（FeishuWorker）
+## 6. 进程内工具 worker（FeishuWorker 飞书 / DesktopWorker 桌面）
+
+飞书和桌面操作都是 eq12_server **进程内直连外部世界**的口，不经过 MQTT
+（MQTT 只服务 ESP32 器官）。它们各自用两条**内部队列**（在 `src/main_loop.py`
+里与 asr/tts 同级创建，名称带 `_` 前缀表示纯内部队列：不是 MQTT 主题，
+`stop()` 的 pub/*、sub/* 哨兵与专职发送线程都不会碰它们）：
+
+### 6.1 飞书网关（FeishuWorker）
 
 飞书是「远程聊天口」：用户在飞书里给机器人发消息，机器人回复（文字/图片）。
-与 ESP32 器官不同，飞书不走 MQTT —— `FeishuWorker` 在 eq12_server 进程内用官方
-`lark-oapi` SDK 直连飞书 OpenAPI（WebSocket 长连接收事件、HTTPS 发消息），
-收发各配一条**内部队列**（`src/main_loop.py` 里与 asr/tts 同级创建，名称带
-`_` 前缀表示纯内部队列：不是 MQTT 主题，`stop()` 的 pub/*、sub/* 哨兵与
-专职发送线程都不会碰它）：
+`FeishuWorker` 用官方 `lark-oapi` SDK 直连飞书 OpenAPI（WebSocket 长连接收
+事件、HTTPS 发消息）：
 
 | 队列 | 方向 | 内容 |
 |---|---|---|
@@ -196,6 +203,43 @@ MainLoop()
 - **生命周期**：两条内部队列不吃 `_STOP` 哨兵，长连接线程与主循环是 daemon，
   随进程退出（与消费 asr/tts 的 worker 一致）；`FeishuWorker.close()` 幂等、
   随时可调，用于主动停长连接。
+
+### 6.2 桌面操作（DesktopWorker）
+
+EQ12「硅基生命」跑在桌面 Windows 主机上，这台电脑就是它可以操控的"工具"。
+`DesktopWorker` 用 `pyautogui`（+ Pillow 截屏）在同一会话模拟键鼠，让上游
+（brain）能"看屏幕 → 想 → 操作"：
+
+| 队列 | 方向 | 内容 |
+|---|---|---|
+| `_sub/desktop` | **出**：本 worker 截完屏幕入队 | 下游（视觉理解/大脑）从这里消费 |
+| `_pub/desktop` | **入**：上游把控制指令放进此队列 → 本 worker 消费并执行 | 键鼠 / 滚轮 / 截屏 |
+
+`_pub/desktop` 指令格式：
+
+```python
+{"type": "keyboard", "value": "A",  "time": 3}    # 同时按下 value 全部键并保持 time 秒
+                                                  #   "AZ" = A+Z 同按；"CTRLALTDELETE" = Ctrl+Alt+Delete
+                                                  #   ⚠️ 按键名按【最长匹配】切分：LEFT/F10 等不会被拆成字母
+{"type": "mouse",   "direction": "UP|DOWN|LEFT|RIGHT", "value": 12}   # 鼠标相对移动 value 像素
+{"type": "scroll",  "direction": "UP|DOWN", "value": 12}              # 滚轮滚动 value 格
+{"type": "screenshot"}                              # 截一张全屏 JPEG → 放进 _sub/desktop（按需截，仿 pub/eye b'photo'）
+```
+
+`_sub/desktop` 截图载荷（字段对齐 esp32 的 `sub/eye` 照片 JSON，仅多 `fmt`）：
+
+```python
+{'type': 'screen', 'time': <unix秒>, 'size': <JPEG字节数>,
+ 'width': W, 'height': H, 'fmt': 'jpeg', 'data': '<base64 JPEG>'}
+```
+
+- **依赖**：`pip install pyautogui`（Windows 下截屏自动依赖 Pillow）。
+  未安装时该 worker 打印提示即退出，不影响其余链路。
+- **安全**：执行的是 OS 级键鼠指令，等同真人操作电脑——只消费 `_pub/desktop`
+  里明确下发的指令，不做自主判断。worker 会关掉 pyautogui 的 FailSafe
+  （默认鼠标到屏幕四角抛异常，机器人需要能点角上的关闭按钮/开始菜单）。
+- **当前边界**：brain 尚未接线（读 `_sub/desktop` 截图、往 `_pub/desktop`
+  发指令）；按键串大小写靠显式 `SHIFT` 组合（如 `"SHIFTA"` 出大写 A）。
 
 ---
 
@@ -240,7 +284,9 @@ assert not any(t.is_alive() for t in loop._threads)
 
 - [x] 框架主体：队列路由、专职发送线程、生命周期、优雅停机
 - [x] FeishuWorker 飞书网关：长连接收发文字/图片，`_sub/feishu` 入队 /
-      `_pub/feishu` 出队（brain 接线待做，见 §6）
+      `_pub/feishu` 出队（brain 接线待做，见 §6.1）
+- [x] DesktopWorker 桌面操作：`_pub/desktop` 键鼠/滚轮/截屏指令执行，
+      `_sub/desktop` 出 JPEG 截图（brain 接线待做，见 §6.2）
 - [ ] `EarWorker` 的 ASR 尚未实现（TODO）
 - [ ] `esp32_client` 器官端已实现 ear/speak/eye/leg/face（见其 README）；本端
       `sub/eye`（照片）、`pub/eye`/`pub/leg`/`pub/face`（触发看/动/表情）的消费与触发 worker 待接

@@ -17,7 +17,8 @@ import threading
 import paho.mqtt.client as mqtt
 
 from .config import BROKER, PORT, PUB_TOPICS, SUB_TOPICS
-from .workers import EarWorker, BrainWorker, SpeakWorker, FeishuWorker
+from .workers import (EarWorker, BrainWorker, SpeakWorker, FeishuWorker,
+                      DesktopWorker)
 
 _STOP = object()   # 停机哨兵：stop() 投进 pub/*、sub/* 队列，消费者 get() 到即退出
 
@@ -43,6 +44,9 @@ class MainLoop:
         # stop() 哨兵（只看 'pub/'、'sub/' 前缀）或专职发送线程接管。
         self.queues[FeishuWorker.SUB_QUEUE] = queue.Queue()   # 收：收到消息入队
         self.queues[FeishuWorker.PUB_QUEUE] = queue.Queue()   # 发：出站消息队列
+        # 桌面操作内部队列（同一 Windows 会话里模拟键鼠/滚轮/截屏，不经 MQTT）
+        self.queues[DesktopWorker.SUB_QUEUE] = queue.Queue()  # 出：屏幕截图入队
+        self.queues[DesktopWorker.PUB_QUEUE] = queue.Queue()  # 入：电脑控制指令
 
         self.qos = {t['name']: t['qos'] for t in SUB_TOPICS + PUB_TOPICS}
 
@@ -52,7 +56,9 @@ class MainLoop:
         brain = BrainWorker(self.queues, stop_token=_STOP)
         speak = SpeakWorker(self.queues, stop_token=_STOP)
         feishu = FeishuWorker(self.queues, stop_token=_STOP)
-        self._worker_runs = [ear.run, brain.run, speak.run, feishu.run]
+        desktop = DesktopWorker(self.queues, stop_token=_STOP)
+        self._worker_runs = [ear.run, brain.run, speak.run,
+                             feishu.run, desktop.run]
 
         self._threads: list[threading.Thread] = []
         self._running = False

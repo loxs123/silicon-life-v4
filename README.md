@@ -41,6 +41,7 @@
 |---|---|
 | `eq12_server/` | EQ12 大脑端：MQTT 中枢框架 + ASR/LLM/TTS worker（详见其 README.md） |
 | `esp32_client/` | ESP32 器官端：MicroPython asyncio 客户端（详见其 README.md） |
+| `requirements.txt` | PC 端 Python 依赖（paho-mqtt/dashscope/lark-oapi/pyautogui，含可选说明） |
 | `demos/` | eq12 侧的 MQTT / 线程 / 队列 / ASR / TTS 原型实验 |
 | `set_dashscope_env.cmd` | 设置 `DASHSCOPE_API_KEY`（含密钥，已被 gitignore，勿提交） |
 | `_device_backup/` | 从旧设备备份出的历史数据（wav/pcm/日志等，gitignored，可删） |
@@ -67,7 +68,7 @@
 
 ```bash
 # ① EQ12：装依赖 + 起 broker + 起服务
-pip install paho-mqtt dashscope
+pip install -r requirements.txt
 mosquitto -v                      # 需允许局域网接入(listener 1883 + allow_anonymous)
 set_dashscope_env.cmd             # 或手动 set DASHSCOPE_API_KEY=sk-xxx
 python run.py                     # 在 eq12_server/ 下
@@ -103,7 +104,10 @@ python run.py                     # 在 eq12_server/ 下
 - [x] esp32 端「脸」表情屏：`pub/face` 文本指令 → ST7789（idle/listen/think/speak/happy/sleep + 眨眼动画）
 - [x] eq12 端「飞书」网关：`FeishuWorker` 直连飞书 OpenAPI 收发文字/图片
       （`_sub/feishu` 收、`_pub/feishu` 发，进程内队列不经 MQTT；凭据放
-      `set_dashscope_env.cmd`）—— brain 消费/回写接线待做（见 eq12_server/README §6）
+      `set_dashscope_env.cmd`）—— brain 消费/回写接线待做（见 eq12_server/README §6.1）
+- [x] eq12 端「桌面」操作：`DesktopWorker` 消费 `_pub/desktop`（keyboard/mouse/
+      scroll/screenshot 指令）并截图入 `_sub/desktop`（JPEG base64，字段对齐
+      `sub/eye`）—— brain 读图/发指令接线待做（见 eq12_server/README §6.2）
 - [ ] eq12 端消费 `sub/eye`（视觉大模型/飞书/存卡）+ 触发 `pub/eye`/`pub/leg`/`pub/face`（大脑主动想看/想动/换表情）—— 待接
 - [ ] 4G(Cat.1) 场景 / 更多器官（head…）—— 待扩展
 

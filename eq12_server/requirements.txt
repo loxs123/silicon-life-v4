@@ -1,0 +1,33 @@
+# ================================================================
+# Silicon Life v4 —— EQ12「硅基生命」PC 端依赖
+# ----------------------------------------------------------------
+# 安装：pip install -r requirements.txt
+# 运行环境：Python >= 3.10（eq12_server 用了 dict[str, ...] 等新注解）
+#
+# 依赖都是"按能力可选"的：缺哪一个，对应 worker 只打印一句提示就
+# 跳过、不影响其它链路（代码里 import 都有 try/except 降级）：
+#   - paho-mqtt   ：eq12_server 主框架 MainLoop（MQTT 中枢），必需
+#   - dashscope   ：ear/brain/speak worker（流式 ASR / LLM / TTS）
+#   - lark-oapi   ：FeishuWorker（飞书收发文字/图片）
+#   - pyautogui   ：DesktopWorker（桌面键鼠/滚轮/截屏），Windows 下
+#                  截屏会连带装 Pillow；desktop_worker.py 直接 import
+#                  PIL 做 JPEG 编码，所以这里显式列出 Pillow
+# ================================================================
+
+# --- eq12_server 主框架：MQTT 总线 ---
+paho-mqtt>=2.0
+# 2.x 才有 CallbackAPIVersion.VERSION2（src/main_loop.py 用到），1.x 会直接报错
+
+# --- 云端能力（DashScope）：ASR / LLM / TTS ---
+dashscope
+
+# --- 飞书网关（FeishuWorker）---
+lark-oapi
+
+# --- 桌面操作（DesktopWorker）：不需要"机器人操控这台电脑"可注释掉 ---
+pyautogui
+Pillow
+
+# --- ESP32 器官端开发工具（可选，刷机/上传才需要，见 esp32_client/README.md）---
+# mpremote
+# esptool
