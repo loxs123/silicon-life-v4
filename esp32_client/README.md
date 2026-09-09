@@ -1,8 +1,11 @@
-# esp32_client —— 器官端（耳 + 嘴）
+# esp32_client —— 器官端（耳 + 眼 + 嘴 + 腿 + 脸）
 
 跑在 **ESP32-S3-CAM**（N16R8）上的 MicroPython 客户端，是 EQ12「硅基生命」的**身体器官**：
 
 - **ear**：I2S 麦克风（INMP441）采集 16k 裸 PCM，持续发布到 `sub/ear`，交给 EQ12 的 ASR；
+- **eye（camera）**：OV3660 摄像头。**不常开预览**：订阅 `pub/eye`，收到拍照指令 `b'photo'` 才拍一张，把照片（JSON 信封 + base64 JPEG）发布到 `sub/eye`；
+- **leg（move）**：PCA9685 + DRV8833。订阅 `pub/leg` 运动指令，**串行执行**——云台舵机（pan/tilt）就位、底盘电机（forward/back/left/right）跑完指定时长自动停，一条做完才做下一条；
+- **face（screen）**：1.54" ST7789 表情屏。订阅 `pub/face` 表情指令（idle/listen/think/speak/happy/sleep），一条画完才切下一条；自带眨眼 + 说话嘴部动画；
 - **speak**：订阅 `pub/speak` 的 24k 裸 PCM（EQ12 TTS），直接喂 I2S 喇叭（MAX98357）播放；
 - 响应 EQ12 的 `pub/ear` 采集指令（`b'stop'` / `b'start'`），实现回声抑制。
 
@@ -22,7 +25,10 @@ esp32_client/
 │   ├── main_loop.py       # 主循环：队列路由 + 任务编排 + 停机（对应 eq12 的 main_loop）
 │   └── workers/
 │       ├── ear.py         # 麦克风采集 → 上行 sub/ear；响应 pub/ear 指令
-│       └── speak.py       # 下行 pub/speak → I2S 播放（裸播）
+│       ├── camera.py      # 眼：pub/eye 收 b'photo' → 拍一张 → 上行 sub/eye
+│       ├── speak.py       # 下行 pub/speak → I2S 播放（裸播）
+│       ├── move.py        # 腿：pub/leg 运动指令串行执行（PCA9685 舵机+电机）
+│       └── screen.py      # 脸：pub/face 表情指令 → ST7789 表情屏（眨眼/嘴动画）
 ├── tests/                 # 测试与调试脚本（见 §7）
 │   ├── smoke_mqtt.py      # PC：MQTT 引擎冒烟（假 broker）
 │   ├── smoke_loop.py      # PC：MainLoop 全链路冒烟（假 machine + 假 broker）
@@ -41,6 +47,9 @@ esp32_client/
 - 主控：ESP32-S3-CAM（N16R8：16MB Flash / 8MB PSRAM），MicroPython ≥ 1.22（需 `machine.I2S` + `asyncio`）
 - 麦克风：INMP441（I2S，**16k 上行**）→ SCK=GPIO14 / WS=GPIO1 / SD=GPIO2
 - 功放+喇叭：MAX98357（I2S，**24k 下行**）→ BCLK=GPIO42 / LRC=GPIO41 / DIN=GPIO21
+- 摄像头：OV3660（300 万像素）→ 24P FPC 直插板载座，**板内已连 GPIO4–18（除 GPIO14）**，无需额外接线
+- 运动：SG90 二自由度云台（摄像头"头"）+ DRV8833 双电机底盘，PWM 全走 PCA9685（I2C GPIO47/48，通道见下）
+- 表情屏：1.54" ST7789（240×240）→ SPI(1)：SCK=GPIO43 / MOSI=GPIO44 / DC=GPIO46 / CS=GPIO3（⚠️ 跑屏时别插 TTL 线）
 
 > 详细接线与风险提示见 `docs/引脚分配与接线.md`（⚠️ 含 strapping 脚、板载 RGB 共用 GPIO48 等坑）。
 
@@ -83,23 +92,74 @@ import asyncio; from src.main_loop import MainLoop; asyncio.run(MainLoop().run()
 | 配置 | 默认 | 说明 |
 |---|---|---|
 | `BROKER` / `PORT` | `192.168.0.108:1883` | EQ12 主机（mosquitto）的局域网 IP |
-| `CLIENT_ID` | `esp32-ear-7f3a` | **必须唯一**！两台设备/脚本用同 id 会互踢（"连上→断开"循环） |
-| `SUB_TOPICS` | `pub/ear`、`pub/speak` | 本端订阅 = 服务器下行 |
-| `PUB_TOPICS` | `sub/ear` | 本端发布 = 服务器上行 |
+| `CLIENT_ID` | `esp32-node-7f3a` | **必须唯一**！两台设备/脚本用同 id 会互踢（"连上→断开"循环） |
+| `SUB_TOPICS` | `pub/ear`、`pub/speak`、`pub/eye`、`pub/leg`、`pub/face` | 本端订阅 = 服务器下行 |
+| `PUB_TOPICS` | `sub/ear`、`sub/eye` | 本端发布 = 服务器上行 |
 | `MIC_RATE` / `MIC_CHUNK` | 16000 / 640B(20ms) | 上行麦克风，与 EQ12 ASR 对齐 |
 | `SPK_RATE` / `SPK_CHUNK` | 24000 / 960B(20ms) | 下行喇叭，与 EQ12 TTS 对齐 |
 | `MIC` / `SPK` | GPIO 见上 | I2S id + 引脚（改线只动这里） |
-| 队列水位 | `OUT_Q_MAX=32` 等 | 满则丢最旧，防 OOM |
+| `CAM_FRAME_SIZE` / `CAM_W/H` / `JPEG_QUALITY` | QVGA / 320×240 / 92 | 拍照分辨率/画质（改配置不用动代码） |
+| `MOVE` / `DRIVE_*_SECONDS` | 通道/限幅/方向校准/默认时长 | 运动通道与参数（PCA9685 CH0/1/12–15，见 docs） |
+| `SCREEN` | SPI(1)/引脚/帧方向 | 表情屏参数（见 docs「1.54 寸屏 ST7789」节） |
+| 队列水位 | `OUT_Q_MAX=32`、`LEG_Q_MAX=64`、`FACE_Q_MAX=64`、`PHOTO_Q_MAX=2` 等 | 满则丢最旧，防 OOM；leg/face 给大以支持动作/表情序列 |
 
 WiFi 在 **boot.py**（根目录那份真实的），不在这里。
 
-## 5. 音频协议契约（与 eq12_server 严格对齐）
+## 5. 消息协议契约（与 eq12_server 严格对齐）
 
-| 主题 | 载荷格式 | 说明 |
+| 主题 | 方向 / 载荷格式 | 说明 |
 |---|---|---|
 | `sub/ear`（上行） | 16k / 16bit / mono 裸 PCM | dashscope 流式 ASR 的固定输入格式 |
 | `pub/speak`（下行） | 24k / 16bit / mono 裸 PCM | qwen3-tts 固定输出，**≠ 上行 16k** |
 | `pub/ear` | `b'stop'` / `b'start'` | 回声抑制：出声前停采、句毕恢复 |
+| `pub/eye`（下行） | `b'photo'` | 拍照指令：收到即拍一张（其它载荷忽略） |
+| `sub/eye`（上行） | UTF-8 JSON 信封，`data` 为 base64 JPEG | 按需拍照，一指令一图；**不是常开视频流** |
+| `pub/leg`（下行） | UTF-8 文本指令（同 v3 move） | **串行动作**：一条做完才做下一条；队列 64 条可放动作序列 |
+| `pub/face`（下行） | UTF-8 文本指令（同 v3 screen） | **串行表情**：一条画完才切下一条；队列 64 条可放表情序列 |
+
+`pub/leg` 指令示例（载荷 = 指令文本的 UTF-8 字节）：
+
+```text
+forward,50,2      # 前进 50%，跑 2 秒自动停（支持 1.5s / 800ms / 2秒）
+back,40           # 后退 40%（默认 1.5s）
+left,30           # 原地左转 30%（默认 1.0s）
+right,30,0.5      # 原地右转 0.5 秒
+pan,90  / tilt,45 # 云台水平/俯仰转指定角度（限幅内）
+stop              # 电机立即停止
+center            # 云台回中(90/90) + 电机停
+# 也兼容旧格式前缀 "[MOVE]:pan,90" 与空格分隔 "forward 50 2"
+```
+
+`pub/face` 指令示例（载荷 = 表情名的 UTF-8 字节，可带旧前缀 `[SCR]:`）：
+
+```text
+idle      # 待机（微笑）
+listen    # 聆听（眼睛下移 O 嘴）
+think     # 思考（眼球上瞟）
+speak     # 说话（嘴部开合动画）
+happy     # 开心（咧嘴）
+sleep     # 睡觉（闭眼 zzz）
+neutral   # 别名 = idle
+# 如 "[SCR]:happy" / "[SCR]:speak"，大小写不敏感
+```
+
+`sub/eye` 照片消息示例（单条 MQTT 载荷，可整体 `json.loads`）：
+
+```json
+{"type":"photo","time":"2025-06-01 12:00:00","size":48213,
+ "width":320,"height":240,"data":"<base64 JPEG>"}
+```
+
+> EQ12 端消费：`b64decode(data)` 即 JPEG 文件字节（与 v3 camera actor 的
+> 照片消息同构，方便将来接视觉大模型 / 飞书 / 存 SD 卡）。
+> 拍照参数（分辨率/画质/引脚/暖帧）在 `src/config.py` 的 `CAM_*`/`SNAP_*`；
+> 接线见 `docs/引脚分配与接线.md` 的「摄像头 OV3660」节。
+> 画面方向（装云台后的颠倒/镜像）本端不做，将来由 EQ12 端收到照片后后处理。
+> `pub/leg` 运动指令解析与串行执行见 `src/workers/move.py` 文件头；通道/限幅/
+> 方向校准在 `src/config.py` 的 `MOVE`，接线见 docs 的「电机与云台（腿）」节。
+> `pub/face` 表情指令解析见 `src/workers/screen.py` 文件头；屏参数在
+> `src/config.py` 的 `SCREEN`，接线/踩坑（SPI(1)、TTL 口）见 docs 的
+> 「1.54 寸屏 ST7789」节。
 
 - 主题名/QoS/方向两端镜像：EQ12 订阅 `sub/*`、发布 `pub/*`；本端反过来。
 - **音量衰减在 EQ12 端做**（`eq12_server/src/workers/speak_worker.py` 的 `VOLUME_DIV`），本端只裸播。
@@ -125,7 +185,9 @@ WiFi 在 **boot.py**（根目录那份真实的），不在这里。
 
 ```bash
 python tests/smoke_mqtt.py     # 假 broker：握手/收发/QoS1 兜底/断线自动重连+重订阅
-python tests/smoke_loop.py     # 假 machine+假 broker：MainLoop 全链路（采集→上行→下行→停机）
+python tests/smoke_loop.py     # 假 machine+假 camera/jpeg+假 PWM+假 Face+假 broker
+                               # （采集上行 → pub/eye 照片 → pub/leg 动作 →
+                               #   pub/face 表情 → 下行播放 → 停机）
 ```
 
 **设备端**（最小隔离测试，需已联网且 /src 已上传）：

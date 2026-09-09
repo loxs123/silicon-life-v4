@@ -21,10 +21,6 @@ SUB_TOPICS = [
         'qos': 0,
     },
     {
-        'name': 'sub/head',
-        'qos': 0,
-    },
-    {
         'name': 'sub/leg',
         'qos': 0,
     },
@@ -55,10 +51,6 @@ PUB_TOPICS = [
         'name': 'pub/speak',
         'qos': 0,
     }, # 说话:下行 TTS 语音流(ESP32 订阅播放)
-    {
-        'name': 'pub/head',
-        'qos': 0,
-    },
     {
         'name': 'pub/leg',
         'qos': 0,

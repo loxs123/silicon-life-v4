@@ -192,7 +192,8 @@ assert not any(t.is_alive() for t in loop._threads)
 
 - [x] 框架主体：队列路由、专职发送线程、生命周期、优雅停机
 - [ ] `EarWorker` 的 ASR 尚未实现（TODO）
-- [ ] `esp32_client` 目录为空，器官端待开发
+- [ ] `esp32_client` 器官端已实现 ear/speak/eye/leg/face（见其 README）；本端
+      `sub/eye`（照片）、`pub/eye`/`pub/leg`/`pub/face`（触发看/动/表情）的消费与触发 worker 待接
 - [ ] 消息载荷目前是**裸 bytes**；器官多了以后建议引入 JSON 信封
       （`{from, to, seq, ts, type, payload}`）以便按内容路由
 - [ ] worker 循环内异常会使该线程静默退出，尚无日志/自动重启

@@ -14,7 +14,10 @@
   asr/tts 内部流水线队列（有 brain）    无 —— 大脑在 EQ12 主机上，esp32 没有
   _STOP 哨兵                            _STOP 哨兵（消费者 get() 到即退出）
 
-esp32 端只承担两个器官：ear（麦克风上行）与 speak（下行 TTS 播放）。
+esp32 端承担五个器官：ear（麦克风上行）、speak（下行 TTS 播放）、
+camera/eye（收到 pub/eye 拍照指令拍一张，上行照片到 sub/eye）、
+move/leg（串行执行 pub/leg 运动指令：云台舵机 + 底盘电机）与
+screen/face（pub/face 表情指令 → ST7789 表情屏）。
 """
 import time
 
@@ -32,7 +35,7 @@ except AttributeError:
 from .config import BROKER, PORT, CLIENT_ID, KEEPALIVE, QOS, Q_CAP
 from .config import PUB_TOPICS, SUB_TOPICS
 from .mqtt import AsyncMQTT
-from .workers import EarWorker, SpeakWorker
+from .workers import EarWorker, SpeakWorker, CameraWorker, MoveWorker, ScreenWorker
 
 _STOP = object()   # 停机哨兵：stop() 投进队列，消费者 get() 到即退出（同 eq12）
 _ACTIVE = False    # 防重复启动：同一进程内只允许一个 MainLoop.run() 在跑
@@ -111,13 +114,19 @@ class MainLoop:
         }
 
         # ---- worker 登记：新器官在这里加一行，run() 即统一启动（同 eq12 注释）----
-        # esp32 无大脑：ear(采麦克风上行) / speak(下行 TTS 播放)
-        # 两者共享一个回声闸：speak 每收到音频就刷新 last_spk，
+        # esp32 无大脑：ear(采麦克风上行) / speak(下行 TTS 播放) /
+        # camera(眼：pub/eye 指令 b'photo' → 拍一张推 sub/eye) /
+        # move(腿：pub/leg 运动指令串行执行 → PCA9685 舵机 + DRV8833 电机) /
+        # screen(脸：pub/face 表情指令 → ST7789)
+        # ear 与 speak 共享一个回声闸：speak 每收到音频就刷新 last_spk，
         # ear 在 b'start' 后等喇叭静默够久才恢复上行（防自答回声）。
         echo = _EchoGate()
         ear = EarWorker(self.queues, stop_token=_STOP, echo=echo)
         speak = SpeakWorker(self.queues, stop_token=_STOP, echo=echo)
-        self._worker_runs = [ear.run, speak.run]
+        camera = CameraWorker(self.queues, stop_token=_STOP)
+        move = MoveWorker(self.queues, stop_token=_STOP)
+        screen = ScreenWorker(self.queues, stop_token=_STOP)
+        self._worker_runs = [ear.run, speak.run, camera.run, move.run, screen.run]
 
         self._tasks = []
         self._stopped = asyncio.Event()

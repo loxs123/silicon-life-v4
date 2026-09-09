@@ -9,9 +9,12 @@
 循环结构（asyncio）：
     MainLoop.run()
       ├─ AsyncMQTT.run()      引擎：连接/重连/订阅/读消息
-      ├─ _publish_worker      sub/ear 专职发送任务
+      ├─ _publish_worker      sub/ear + sub/eye 专职发送任务（每上行主题一个）
       ├─ EarWorker.run()      麦克风采集 → 上行
-      └─ SpeakWorker.run()    下行 TTS → I2S 播放
+      ├─ SpeakWorker.run()    下行 TTS → I2S 播放
+      ├─ CameraWorker.run()   下行 pub/eye 拍照指令 → 拍一张推 sub/eye
+      ├─ MoveWorker.run()     下行 pub/leg 运动指令 → 串行执行（舵机/电机）
+      └─ ScreenWorker.run()   下行 pub/face 表情指令 → ST7789 表情屏
 """
 try:
     import asyncio

@@ -6,22 +6,6 @@ BrainWorker —— "大脑"器官:ASR 文本进来,流式调大模型,成句即�
     sub/ear 原始音频 → EarWorker(ASR) → queues['asr']   ← 本 worker 在此消费
     BrainWorker(流式 LLM) → queues['tts'] → SpeakWorker(TTS)
         → queues['pub/speak'] → MQTT → ESP32 出声
-
-每当 asr 队列来一条完整识别文本(ear_worker 只在 sentence_end 时投,即一个
-完整句子),就流式调用一次大模型(stream=True + incremental_output=True,
-首字尽可能早到)。流式增量里**每凑成一个完整句子(以 。！？!? 结尾)就立刻
-整句投进 tts 队列**,不必等整段回复收齐 —— SpeakWorker 可以边说这句、边等
-模型生成下一句(TTS 是"一句一文本"地合成,所以只送完整句,不送半截增量,
-避免说出残缺的话;模型收尾时若还有不带句号的话尾巴,也作为最后一句送出)。
-
-对话记忆:进程内保留最近 MAX_HISTORY 条历史(含人设 system 消息),让"硅基
-生命"能接上下文;超过上限丢弃最老的对话,防上下文无限膨胀。历史里存的是
-模型整段回复(由各句拼回),与听到的每句都能对上。
-
-worker 骨架(队列循环 / stop_token / 优雅停机)对齐 ear_worker.py。停机说明
-同 speak_worker:内部 asr/tts 队列不投 _STOP 哨兵,本 worker 是 daemon 线程,
-随进程退出结束。
-
 依赖:
     pip install dashscope
     set DASHSCOPE_API_KEY=sk-xxx
