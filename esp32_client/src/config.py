@@ -45,6 +45,10 @@ PUB_TOPICS = [
         'name': 'sub/eye',
         'qos': 0,
     },   # 上行：照片（UTF-8 JSON 信封 + base64 JPEG，EQ12 订阅消费）
+    {
+        'name': 'sub/leg',
+        'qos': 0,
+    },   # 上行：腿的指令完成回执（文本 done:<指令>，EQ12 订阅做动作同步）
 ]
 
 QOS = {t['name']: t['qos'] for t in SUB_TOPICS + PUB_TOPICS}
@@ -60,6 +64,9 @@ PHOTO_Q_MAX = 2     # sub/eye 出站队列：照片大、按需拍，只留最�
 # pub/leg 指令队列：EQ12 可能一次下发一串动作序列（前进/转向/转头…），给大一点，
 # worker 按序一条做完再做下一条；满则丢最旧（只丢还没执行的最老动作）
 LEG_Q_MAX = 64
+# sub/leg 完成回执出站队列：腿每执行完一条 pub/leg 上行一条 done 文本，很轻量；
+# 满则丢最旧（保新鲜，正常瞬时一条条发不会积压）
+LEG_DONE_Q_MAX = 16
 # pub/face 指令队列：同理，EQ12 一次下发一串表情（唱歌/表演/多轮对话），给大一点
 FACE_Q_MAX = 64
 Q_CAP = {
@@ -70,6 +77,7 @@ Q_CAP = {
     'pub/face': FACE_Q_MAX,
     'sub/ear': OUT_Q_MAX,
     'sub/eye': PHOTO_Q_MAX,
+    'sub/leg': LEG_DONE_Q_MAX,
 }
 
 # ---------- 音频（裸 PCM；格式须与 eq12_server 两侧服务对齐） ----------

@@ -10,7 +10,7 @@ EQ12「硅基生命」跑在桌面 Windows 主机上：这台电脑就是它的"
 里与 asr/tts 同级创建，'_' 前缀 = 纯内部队列，不被 stop() 哨兵 / 专职发送
 线程接管）：
 
-    _sub/desktop   收 / 出：屏幕截图（本 worker 截完放进来，下游消费）
+    _sub/desktop   收 / 出：屏幕截图 + 指令完成回执（本 worker 放进来，下游消费）
     _pub/desktop   发 / 入：电脑控制指令（上游放进来，本 worker 消费并执行）
 
 _pub/desktop 指令格式：
@@ -34,6 +34,15 @@ _sub/desktop 截图载荷（字段对齐 esp32 的 sub/eye 照片 JSON，只是�
 
     {'type': 'screen', 'time': <unix 秒>, 'size': <JPEG 字节数>,
      'width': W, 'height': H, 'fmt': 'jpeg', 'data': '<base64 JPEG>'}
+
+完成回执（本 worker 每**真正执行成功**一条指令就追加一条，与截图同队列、按序，
+下游统一消费 _sub/desktop 即可）：
+
+    {'type': 'done', 'time': <unix 秒>, 'command': <原始指令 dict>}
+        # 说明刚完成的指令：keyboard 已按完抬起 / mouse 已移动 / scroll 已滚 /
+        #   screenshot 已把截图入队（紧随其后的那条 {'type':'screen'} 即结果）。
+        # 只回"真做完"的：指令无效（缺参/方向错/无按键）或执行抛异常只打日志，
+        #   不回执——下游如需配对/超时兜底，用 type 区分 screen / done。
 
 依赖：
     pip install pyautogui        # 键鼠/滚轮 + 截屏（Windows 下截图自动依赖 Pillow）
@@ -71,7 +80,7 @@ except Exception as _e:  # noqa: E722
     _PIL_Image = None
     _PIL_IMPORT_ERR = _e
 
-SUB_QUEUE = '_sub/desktop'   # 收/出：屏幕截图入队（下游消费）
+SUB_QUEUE = '_sub/desktop'   # 收/出：屏幕截图 + 完成回执入队（下游消费）
 PUB_QUEUE = '_pub/desktop'   # 发/入：电脑控制指令（本 worker 消费执行）
 
 DEFAULT_HOLD_S = 0.05        # keyboard 缺省 time：按压多久（秒）
@@ -174,7 +183,7 @@ class DesktopWorker:
         except Exception:
             pass
         print('[Desktop] DesktopWorker 已启动'
-              '（指令←消费 %s，截图→入队 %s）' % (PUB_QUEUE, SUB_QUEUE),
+              '（指令←消费 %s，结果/截图→入队 %s）' % (PUB_QUEUE, SUB_QUEUE),
               flush=True)
         while True:
             item = self.queues[PUB_QUEUE].get()   # 阻塞等指令
@@ -184,21 +193,25 @@ class DesktopWorker:
                 print('[Desktop] 忽略未知指令: %r' % (item,), flush=True)
                 continue
             mtype = item.get('type')
+            ok = False
             try:
                 if mtype == 'keyboard':
-                    self._do_keyboard(item)
+                    ok = self._do_keyboard(item)
                 elif mtype == 'mouse':
-                    self._do_mouse(item)
+                    ok = self._do_mouse(item)
                 elif mtype == 'scroll':
-                    self._do_scroll(item)
+                    ok = self._do_scroll(item)
                 elif mtype == 'screenshot':
-                    self._do_screenshot()
+                    ok = self._do_screenshot()
                 else:
                     print('[Desktop] 忽略未知指令类型: %r' % (mtype,),
                           flush=True)
             except Exception as e:
+                ok = False
                 print('[Desktop] 指令执行失败[%s]: %s'
                       % (type(e).__name__, e), flush=True)
+            if ok:
+                self._report_done(item)   # 真做完才回执（失败/无效不回执）
 
     # ------------------------------------------------------------ 键盘
     def _do_keyboard(self, cmd):
@@ -214,9 +227,10 @@ class DesktopWorker:
         names = [key_name(tok) for tok in tokens]
         if not names:
             print('[Desktop] 键盘指令缺 value: %s' % cmd, flush=True)
-            return
+            return False
         print('[Desktop] 键盘 %s ×%.2fs' % ('+'.join(names), hold), flush=True)
         self._chord(names, hold)
+        return True
 
     def _chord(self, names, hold):
         """同时按下所有键 → 保持 hold 秒 → 全部抬起。
@@ -246,10 +260,11 @@ class DesktopWorker:
         step = _MOUSE_STEP.get(direction)
         if step is None or value == 0:
             print('[Desktop] 鼠标指令无效: %s' % cmd, flush=True)
-            return
+            return False
         dx, dy = step[0] * value, step[1] * value
         print('[Desktop] 鼠标移动 (%+d, %+d)' % (dx, dy), flush=True)
         self.gui.moveRel(dx, dy, duration=0.0)
+        return True
 
     # ------------------------------------------------------------ 滚轮
     def _do_scroll(self, cmd):
@@ -264,9 +279,10 @@ class DesktopWorker:
             amount = -abs(value)
         else:
             print('[Desktop] 滚轮指令无效: %s' % cmd, flush=True)
-            return
+            return False
         print('[Desktop] 滚轮 %s %d 格' % (direction, abs(value)), flush=True)
         self.gui.scroll(amount)      # pyautogui: 正=上滚, 负=下滚
+        return True
 
     # ------------------------------------------------------------ 截屏
     def _do_screenshot(self):
@@ -274,7 +290,7 @@ class DesktopWorker:
             print('[Desktop] Pillow 不可用，无法截屏'
                   '（pip install pillow；原因为 %s）' % _PIL_IMPORT_ERR,
                   flush=True)
-            return
+            return False
         im = self.gui.screenshot()           # pyautogui -> PIL Image
         buf = io.BytesIO()
         im.save(buf, 'JPEG', quality=JPEG_QUALITY)
@@ -292,3 +308,20 @@ class DesktopWorker:
         print('[Desktop] 截图已入队 %s: %dx%d %dB (JPEG q=%d)'
               % (SUB_QUEUE, meta['width'], meta['height'],
                  len(jpg), JPEG_QUALITY), flush=True)
+        return True
+
+    # ------------------------------------------------------------ 完成回执
+    def _report_done(self, cmd):
+        """指令执行成功后，把完成回执放进 SUB_QUEUE（与截图同队列、按序）。
+
+        载荷 = {'type': 'done', 'time': <unix 秒>, 'command': <原始指令 dict>}，
+        说明刚完成的是哪条指令。只回"真做完"的：无效/失败路径在 run() 里
+        已跳过本方法（见文件头协议说明）。
+        """
+        meta = {
+            'type': 'done',
+            'time': int(time.time()),
+            'command': cmd,
+        }
+        self.queues[SUB_QUEUE].put(meta)
+        print('[Desktop] 指令完成已入队 %s: %s' % (SUB_QUEUE, cmd), flush=True)

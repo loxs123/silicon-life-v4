@@ -4,7 +4,7 @@
 
 - **ear**：I2S 麦克风（INMP441）采集 16k 裸 PCM，持续发布到 `sub/ear`，交给 EQ12 的 ASR；
 - **eye（camera）**：OV3660 摄像头。**不常开预览**：订阅 `pub/eye`，收到拍照指令 `b'photo'` 才拍一张，把照片（JSON 信封 + base64 JPEG）发布到 `sub/eye`；
-- **leg（move）**：PCA9685 + DRV8833。订阅 `pub/leg` 运动指令，**串行执行**——云台舵机（pan/tilt）就位、底盘电机（forward/back/left/right）跑完指定时长自动停，一条做完才做下一条；
+- **leg（move）**：PCA9685 + DRV8833。订阅 `pub/leg` 运动指令，**串行执行**——云台舵机（pan/tilt）就位、底盘电机（forward/back/left/right）跑完指定时长自动停，一条做完才做下一条；每做完一条往 `sub/leg` 上行完成回执（文本 `done:<指令>`，说明刚完成哪条）；
 - **face（screen）**：1.54" ST7789 表情屏。订阅 `pub/face` 表情指令（idle/listen/think/speak/happy/sleep），一条画完才切下一条；自带眨眼 + 说话嘴部动画；
 - **speak**：订阅 `pub/speak` 的 24k 裸 PCM（EQ12 TTS），直接喂 I2S 喇叭（MAX98357）播放；
 - 响应 EQ12 的 `pub/ear` 采集指令（`b'stop'` / `b'start'`），实现回声抑制。
@@ -94,7 +94,7 @@ import asyncio; from src.main_loop import MainLoop; asyncio.run(MainLoop().run()
 | `BROKER` / `PORT` | `192.168.0.108:1883` | EQ12 主机（mosquitto）的局域网 IP |
 | `CLIENT_ID` | `esp32-node-7f3a` | **必须唯一**！两台设备/脚本用同 id 会互踢（"连上→断开"循环） |
 | `SUB_TOPICS` | `pub/ear`、`pub/speak`、`pub/eye`、`pub/leg`、`pub/face` | 本端订阅 = 服务器下行 |
-| `PUB_TOPICS` | `sub/ear`、`sub/eye` | 本端发布 = 服务器上行 |
+| `PUB_TOPICS` | `sub/ear`、`sub/eye`、`sub/leg` | 本端发布 = 服务器上行（`sub/leg` = 腿的完成回执） |
 | `MIC_RATE` / `MIC_CHUNK` | 16000 / 640B(20ms) | 上行麦克风，与 EQ12 ASR 对齐 |
 | `SPK_RATE` / `SPK_CHUNK` | 24000 / 960B(20ms) | 下行喇叭，与 EQ12 TTS 对齐 |
 | `MIC` / `SPK` | GPIO 见上 | I2S id + 引脚（改线只动这里） |
@@ -115,6 +115,7 @@ WiFi 在 **boot.py**（根目录那份真实的），不在这里。
 | `pub/eye`（下行） | `b'photo'` | 拍照指令：收到即拍一张（其它载荷忽略） |
 | `sub/eye`（上行） | UTF-8 JSON 信封，`data` 为 base64 JPEG | 按需拍照，一指令一图；**不是常开视频流** |
 | `pub/leg`（下行） | UTF-8 文本指令（同 v3 move） | **串行动作**：一条做完才做下一条；队列 64 条可放动作序列 |
+| `sub/leg`（上行） | UTF-8 文本回执：`done:<指令>`（如 `done:forward,50,2`） | 腿**真做完**一条 `pub/leg` 就回执一条，说明刚完成哪条（电机跑完自动停后才发）；EQ12 订阅做动作同步 |
 | `pub/face`（下行） | UTF-8 文本指令（同 v3 screen） | **串行表情**：一条画完才切下一条；队列 64 条可放表情序列 |
 
 `pub/leg` 指令示例（载荷 = 指令文本的 UTF-8 字节）：
@@ -155,7 +156,8 @@ neutral   # 别名 = idle
 > 拍照参数（分辨率/画质/引脚/暖帧）在 `src/config.py` 的 `CAM_*`/`SNAP_*`；
 > 接线见 `docs/引脚分配与接线.md` 的「摄像头 OV3660」节。
 > 画面方向（装云台后的颠倒/镜像）本端不做，将来由 EQ12 端收到照片后后处理。
-> `pub/leg` 运动指令解析与串行执行见 `src/workers/move.py` 文件头；通道/限幅/
+> `pub/leg` 运动指令解析与串行执行见 `src/workers/move.py` 文件头（含 `sub/leg`
+> 完成回执协议：载荷 `done:<指令>`，只回真做完的）；通道/限幅/
 > 方向校准在 `src/config.py` 的 `MOVE`，接线见 docs 的「电机与云台（腿）」节。
 > `pub/face` 表情指令解析见 `src/workers/screen.py` 文件头；屏参数在
 > `src/config.py` 的 `SCREEN`，接线/踩坑（SPI(1)、TTL 口）见 docs 的
@@ -186,7 +188,7 @@ neutral   # 别名 = idle
 ```bash
 python tests/smoke_mqtt.py     # 假 broker：握手/收发/QoS1 兜底/断线自动重连+重订阅
 python tests/smoke_loop.py     # 假 machine+假 camera/jpeg+假 PWM+假 Face+假 broker
-                               # （采集上行 → pub/eye 照片 → pub/leg 动作 →
+                               # （采集上行 → pub/eye 照片 → pub/leg 动作+sub/leg 完成回执 →
                                #   pub/face 表情 → 下行播放 → 停机）
 ```
 

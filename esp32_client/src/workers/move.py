@@ -23,6 +23,21 @@
     worker 收一条做一条：舵机动作立即到位；电机动作跑完指定时长自动停，
     再取下一条。停机/异常路径用 finally 保证电机一定停（不会"一直冲"）。
 
+完成回执（上行 sub/leg，动作同步用）：
+    worker 每**真正执行完**一条 pub/leg 指令（舵机已到位 / 电机跑完自动停 /
+    stop / center 复位）就向上行队列 sub/leg 推一条 UTF-8 文本回执，载荷 =
+    "done:" + 规范化指令，说明刚完成的是哪条指令：
+        done:pan,90            云台水平已转到 90°（限幅内）
+        done:tilt,45           云台俯仰已转到 45°（限幅内）
+        done:forward,50,2      前进 50% 已跑满 2 秒、电机已自动停
+        done:right,30,0.5      原地右转 0.5 秒完毕
+        done:center / done:stop   复位完成 / 已停
+    EQ12 订阅 sub/leg（见 eq12_server/src/config.py 的 SUB_TOPICS）即可按
+    "pub/leg 指令 → sub/leg 回执"配对，知道动作**做完了**（驱动动作序列的
+    下一步 / 回答时机）。回执只发给真做完的指令：PCA9685 未就绪 / 未知指令 /
+    参数错误只打日志**不回执**，避免下游误判动作已完成。sub/leg 是上行 MQTT
+    主题，须登记在 esp32 端 config.PUB_TOPICS（专职发送任务负责发布）。
+
 所有参数（通道/引脚/限幅/方向校准/默认时长）在 src/config.py 的 MOVE/DRIVE_*，
 改配置不用动本文件。
 """
@@ -34,6 +49,11 @@ except ImportError:
 import time
 
 from .. import config
+
+# 完成回执上行主题（须登记在 config.PUB_TOPICS，专职发送任务发布到 MQTT）
+DONE_TOPIC = 'sub/leg'
+# 回执前缀：载荷 = "done:" + 规范化指令（UTF-8 文本，见文件头协议）
+DONE_PREFIX = 'done:'
 
 
 # ==================================================================
@@ -215,22 +235,28 @@ class MoveWorker:
 
     # ====================================================== 指令执行
     async def _execute(self, cmd, arg1, arg2):
-        """执行一条指令（串行：本协程跑完才轮到下一条）。"""
+        """执行一条指令（串行：本协程跑完才轮到下一条）。
+
+        返回 True = 指令已真正执行完（可发 sub/leg 完成回执）；
+        False = 未执行（未就绪 / 未知指令 / 参数错误，只打日志不回执）。
+        """
         mv = config.MOVE
         if self.pwm is None:
             print('[move] PCA9685 未就绪，忽略指令: %s' % cmd)
-            return
+            return False
         try:
             if cmd == 'pan':
                 a = max(mv['pan_min'], min(mv['pan_max'], float(arg1)))
                 self.pwm.servo_angle(mv['ch_pan'], a)
                 print('[move] 云台水平 -> %d°（限幅 %d~%d）'
                       % (int(a), mv['pan_min'], mv['pan_max']))
+                return True
             elif cmd == 'tilt':
                 a = max(mv['tilt_min'], min(mv['tilt_max'], float(arg1)))
                 self.pwm.servo_angle(mv['ch_tilt'], a)
                 print('[move] 云台俯仰 -> %d°（限幅 %d~%d）'
                       % (int(a), mv['tilt_min'], mv['tilt_max']))
+                return True
             elif cmd in ('forward', 'back', 'left', 'right'):
                 s = int(float(arg1))          # 速度 0-100（_motor 内夹紧）
                 if cmd == 'forward':
@@ -254,23 +280,53 @@ class MoveWorker:
                 finally:
                     self._stop_motors()          # 任何退出路径都保证电机停
                     print('[move] 电机已停')
+                return True                      # 电机确已自动停，才算跑完
             elif cmd in ('center', 'home', 'reset', 'zero'):
                 self.pwm.servo_angle(mv['ch_pan'], 90)
                 self.pwm.servo_angle(mv['ch_tilt'], 90)
                 self._stop_motors()
                 print('[move] 复位：云台回中(90/90)，电机停止')
+                return True
             elif cmd == 'stop':
                 self._stop_motors()
                 print('[move] 电机停止')
+                return True
             else:
                 print('[move] 未知指令: %s' % cmd)
+                return False
         except (TypeError, ValueError) as e:
             print('[move] 指令参数错误 (%s %s): %s' % (cmd, arg1, e))
+            return False
+
+    # ====================================================== 完成回执
+    def _done_payload(self, cmd, arg1, arg2):
+        """把已执行指令编码成 sub/leg 回执文本："done:" + 规范化指令
+        （done:forward,50,2 / done:pan,90 / done:center）。"""
+        parts = [cmd]
+        for a in (arg1, arg2):
+            if a is not None:
+                parts.append(str(a))
+        return (DONE_PREFIX + ','.join(parts)).encode('utf-8')
+
+    def _report_done(self, cmd, arg1, arg2):
+        """往上行队列 sub/leg 推"指令完成"回执（只在指令真做完后调用）。
+
+        队列未登记（如单测只给 pub/leg 的 dict）则只打日志，不抛、不影响执行。
+        """
+        q = self.queues.get(DONE_TOPIC)
+        if q is None:
+            print('[move] 未登记上行队列 %s，跳过完成回执' % DONE_TOPIC)
+            return
+        payload = self._done_payload(cmd, arg1, arg2)
+        q.put_nowait(payload)
+        print('[move] 指令完成 -> %s: %s' % (DONE_TOPIC,
+                                             payload.decode('utf-8')))
 
     # ====================================================== 主循环
     async def run(self):
-        """串行消费 pub/leg：一条做完（电机跑完时长）才取下一条。"""
-        print('[move] 腿就绪：pub/leg 指令串行执行')
+        """串行消费 pub/leg：一条做完（电机跑完时长）才取下一条，
+        做完即往 sub/leg 上行一条 done 回执（说明哪条指令完成了）。"""
+        print('[move] 腿就绪：pub/leg 指令串行执行，完成回执 -> %s' % DONE_TOPIC)
         if self.pwm is None:
             await self._init_pwm()
         while True:
@@ -282,4 +338,6 @@ class MoveWorker:
                 continue
             if self.pwm is None:
                 await self._init_pwm()     # 未就绪时每次指令前重试（自恢复）
-            await self._execute(cmd, arg1, arg2)
+            ok = await self._execute(cmd, arg1, arg2)
+            if ok:
+                self._report_done(cmd, arg1, arg2)   # 真做完才回执（sub/leg 上行）

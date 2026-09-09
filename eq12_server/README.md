@@ -212,7 +212,7 @@ EQ12「硅基生命」跑在桌面 Windows 主机上，这台电脑就是它可�
 
 | 队列 | 方向 | 内容 |
 |---|---|---|
-| `_sub/desktop` | **出**：本 worker 截完屏幕入队 | 下游（视觉理解/大脑）从这里消费 |
+| `_sub/desktop` | **出**：本 worker 放结果入队（截图 + 指令完成回执） | 下游（视觉理解/大脑）从这里消费 |
 | `_pub/desktop` | **入**：上游把控制指令放进此队列 → 本 worker 消费并执行 | 键鼠 / 滚轮 / 截屏 |
 
 `_pub/desktop` 指令格式：
@@ -233,12 +233,22 @@ EQ12「硅基生命」跑在桌面 Windows 主机上，这台电脑就是它可�
  'width': W, 'height': H, 'fmt': 'jpeg', 'data': '<base64 JPEG>'}
 ```
 
+`_sub/desktop` 完成回执（与截图同队列、按序；每条指令**真执行成功**后追加一条，
+说明刚完成的是哪条指令）：
+
+```python
+{'type': 'done', 'time': <unix秒>, 'command': <原始指令 dict>}
+# keyboard 已按完抬起 / mouse 已移动 / scroll 已滚 /
+# screenshot 已把截图入队（紧随其后的 {'type':'screen'} 即结果）。
+# 指令无效（缺参/方向错/无按键）或执行抛异常时只打日志、不回执。
+```
+
 - **依赖**：`pip install pyautogui`（Windows 下截屏自动依赖 Pillow）。
   未安装时该 worker 打印提示即退出，不影响其余链路。
 - **安全**：执行的是 OS 级键鼠指令，等同真人操作电脑——只消费 `_pub/desktop`
   里明确下发的指令，不做自主判断。worker 会关掉 pyautogui 的 FailSafe
   （默认鼠标到屏幕四角抛异常，机器人需要能点角上的关闭按钮/开始菜单）。
-- **当前边界**：brain 尚未接线（读 `_sub/desktop` 截图、往 `_pub/desktop`
+- **当前边界**：brain 尚未接线（读 `_sub/desktop` 截图与完成回执、往 `_pub/desktop`
   发指令）；按键串大小写靠显式 `SHIFT` 组合（如 `"SHIFTA"` 出大写 A）。
 
 ---
@@ -286,7 +296,8 @@ assert not any(t.is_alive() for t in loop._threads)
 - [x] FeishuWorker 飞书网关：长连接收发文字/图片，`_sub/feishu` 入队 /
       `_pub/feishu` 出队（brain 接线待做，见 §6.1）
 - [x] DesktopWorker 桌面操作：`_pub/desktop` 键鼠/滚轮/截屏指令执行，
-      `_sub/desktop` 出 JPEG 截图（brain 接线待做，见 §6.2）
+      `_sub/desktop` 出 JPEG 截图 + 指令完成回执 `{'type':'done',...}`
+      （brain 接线待做，见 §6.2）
 - [ ] `EarWorker` 的 ASR 尚未实现（TODO）
 - [ ] `esp32_client` 器官端已实现 ear/speak/eye/leg/face（见其 README）；本端
       `sub/eye`（照片）、`pub/eye`/`pub/leg`/`pub/face`（触发看/动/表情）的消费与触发 worker 待接

@@ -45,7 +45,7 @@ class MainLoop:
         self.queues[FeishuWorker.SUB_QUEUE] = queue.Queue()   # 收：收到消息入队
         self.queues[FeishuWorker.PUB_QUEUE] = queue.Queue()   # 发：出站消息队列
         # 桌面操作内部队列（同一 Windows 会话里模拟键鼠/滚轮/截屏，不经 MQTT）
-        self.queues[DesktopWorker.SUB_QUEUE] = queue.Queue()  # 出：屏幕截图入队
+        self.queues[DesktopWorker.SUB_QUEUE] = queue.Queue()  # 出：截图+完成回执入队
         self.queues[DesktopWorker.PUB_QUEUE] = queue.Queue()  # 入：电脑控制指令
 
         self.qos = {t['name']: t['qos'] for t in SUB_TOPICS + PUB_TOPICS}

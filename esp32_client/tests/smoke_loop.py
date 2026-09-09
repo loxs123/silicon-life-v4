@@ -10,7 +10,8 @@
   3. CameraWorker：broker 下行 pub/eye(b'photo') → 假相机拍帧 → 假 jpeg 编码
      → sub/eye 队列出现 JSON 信封（base64 data 与"编码结果"一致）
   4. MoveWorker（假 PCA9685）：pub/leg 指令串行执行——pan/tilt 限幅就位、
-     forward 跑 0.2s 后自动停、center 复位、错误载荷不触发
+     forward 跑 0.2s 后自动停、center 复位、错误载荷不触发；
+     每条真做完的指令上行一条 done 回执到 sub/leg（电机跑完自动停之后才发）
   5. ScreenWorker（假 Face）：pub/face 表情指令按序切换——[SCR]: 前缀、
      neutral 别名、未知表情跳过
   6. SpeakWorker：broker 下行 pub/speak(2000B) → I2S 桩分块写入总长正确
@@ -166,9 +167,9 @@ async def main():
         # ---- 1) 连接 + 订阅 ----
         await wait_until(lambda: loop.mqtt.connected, what='mqtt connected')
         await wait_until(lambda: broker.subscribes >= 5, what='subscribe x5')
-        # 引擎 + 2 个上行发送任务(sub/ear, sub/eye)
-        #     + ear + speak + camera + move + screen = 8
-        assert len(loop._tasks) == 8, len(loop._tasks)
+        # 引擎 + 3 个上行发送任务(sub/ear, sub/eye, sub/leg)
+        #     + ear + speak + camera + move + screen = 9
+        assert len(loop._tasks) == 9, len(loop._tasks)
 
         # ---- 2) EarWorker：上行音频不断到达 broker ----
         await wait_until(lambda: len(broker.rx_pub) >= 3,
@@ -223,35 +224,50 @@ async def main():
         await asyncio.wait_for(run_task, 3)
         assert all(i.deinited for i in _i2s_registry), 'I2S 未全部 deinit'
 
-        # ---- 6) MoveWorker：pub/leg 串行执行（假 PCA9685）----
+        # ---- 6) MoveWorker：pub/leg 串行执行 + 完成回执上行 sub/leg ----
         fpwm = FakePwm()
-        mv_queues = {'pub/leg': _Queue()}
+        mv_queues = {'pub/leg': _Queue(), 'sub/leg': _Queue()}
         mv = MoveWorker(mv_queues, stop_token=_STOP, pca9685=fpwm)
         mv_task = asyncio.create_task(mv.run())
 
         async def leg_cmd(text):
             mv_queues['pub/leg'].put_nowait(_Msg('pub/leg', text.encode('utf-8')))
 
+        async def next_done():
+            """取 worker 发到 sub/leg 的下一条完成回执（没有就等，2s 超时）。"""
+            item = await asyncio.wait_for(mv_queues['sub/leg'].get(), 2)
+            if isinstance(item, (bytes, bytearray)):
+                return item.decode('utf-8')
+            return str(item)
+
         await asyncio.sleep(0.02)        # worker 起跑（pwm 已注入，跳过 _init_pwm）
 
         await leg_cmd('pan,200')         # 越界 → 钳到 pan_max=120
         await leg_cmd('[MOVE]:tilt,60')  # 兼容旧前缀
-        await asyncio.sleep(0.1)
+        assert await next_done() == 'done:pan,200'
+        assert await next_done() == 'done:tilt,60'   # 规范化回执（去前缀）
         assert fpwm.angles == [(0, 120), (1, 60)], fpwm.angles
 
         await leg_cmd('forward,50,0.2')  # 电机跑 0.2s（之后自动停）
         await asyncio.sleep(0.1)
         assert any(v > 0 for _, v in fpwm.duties), fpwm.duties[-6:]
+        assert await next_done() == 'done:forward,50,0.2'  # 跑完自动停才回执
         await asyncio.sleep(0.25)        # 超过 0.2s → 自动停：四通道最后写 0
         assert all(v == 0 for _, v in fpwm.duties[-4:]), fpwm.duties[-4:]
 
         await leg_cmd('right,30,0.1')    # 串行：跑完才执行后面的 center
         await leg_cmd('center')
-        await asyncio.sleep(0.35)
+        assert await next_done() == 'done:right,30,0.1'
+        assert await next_done() == 'done:center'
         assert (0, 90) in fpwm.angles and (1, 90) in fpwm.angles
+
+        await leg_cmd('bogus')           # 未知指令：不执行也不回执
+        await asyncio.sleep(0.05)
+        assert mv_queues['sub/leg'].qsize() == 0
 
         mv_queues['pub/leg'].put_nowait(_STOP)
         await asyncio.wait_for(mv_task, 2)
+        assert mv_queues['sub/leg'].qsize() == 0
 
         # ---- 7) ScreenWorker：pub/face 表情指令按序切换（假 Face）----
         fface = FakeFace()

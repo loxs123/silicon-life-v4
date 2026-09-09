@@ -30,6 +30,7 @@
 │    SpeakWorker：pub/speak(24k) ──▶ I2S 喇叭播放（裸播，不做处理）                 │
 │    CameraWorker：pub/eye(b'photo') → 拍一张(OV3660) → sub/eye(JSON+base64)         │
 │    MoveWorker  ：pub/leg 指令串行执行（PCA9685: 云台 CH0/1 + 电机 CH12–15）        │
+│                 每做完一条 → 上行回执 sub/leg（文本 done:<指令>）                  │
 │    ScreenWorker：pub/face 表情指令 → ST7789 表情屏（眨眼/嘴动画）                  │
 │    pub/ear 指令：b'stop' 停采并清未播缓冲 / b'start' 恢复                          │
 └──────────────────────────────────────────────────────────────────────────────────┘
@@ -56,6 +57,7 @@
 | `pub/eye` | 服务器 → 器官 | `b'photo'`（拍照指令，一指令一张） | eq12（大脑，待接） | ESP32 CameraWorker |
 | `sub/eye` | 器官 → 服务器 | UTF-8 JSON：`{"type":"photo","time":...,"size":n,"width":W,"height":H,"data":"<base64 JPEG>"}` | ESP32 CameraWorker | eq12（视觉理解/转发，待接） |
 | `pub/leg` | 服务器 → 器官 | UTF-8 文本指令（同 v3 move）：`forward,50,2` / `pan,90` / `stop` / `center`… | eq12（大脑，待接） | ESP32 MoveWorker |
+| `sub/leg` | 器官 → 服务器 | UTF-8 文本完成回执：`done:<指令>`（如 `done:forward,50,2`，说明哪条指令做完了） | ESP32 MoveWorker | eq12（大脑，待接） |
 | `pub/face` | 服务器 → 器官 | UTF-8 文本指令（同 v3 screen）：`speak` / `happy` / `sleep`（可带 `[SCR]:` 前缀） | eq12（大脑，待接） | ESP32 ScreenWorker |
 
 ⚠️ **上下行采样率不同**（上行 ASR 16k、下行 TTS 24k），两端分别配置，不能共用一个采样率。
@@ -101,13 +103,15 @@ python run.py                     # 在 eq12_server/ 下
 - [x] 端到端语音对话跑通（含回声抑制、断线自动重连）
 - [x] esp32 端「眼睛」拍照链路：`pub/eye`(b'photo') → OV3660 拍一张 → `sub/eye`(JSON+base64)
 - [x] esp32 端「腿」串行动作执行器：`pub/leg` 文本指令 → PCA9685 云台舵机 + DRV8833 底盘电机
+      （每做完一条 → 上行回执 `sub/leg`，文本 `done:<指令>` 说明刚完成哪条）
 - [x] esp32 端「脸」表情屏：`pub/face` 文本指令 → ST7789（idle/listen/think/speak/happy/sleep + 眨眼动画）
 - [x] eq12 端「飞书」网关：`FeishuWorker` 直连飞书 OpenAPI 收发文字/图片
       （`_sub/feishu` 收、`_pub/feishu` 发，进程内队列不经 MQTT；凭据放
       `set_dashscope_env.cmd`）—— brain 消费/回写接线待做（见 eq12_server/README §6.1）
 - [x] eq12 端「桌面」操作：`DesktopWorker` 消费 `_pub/desktop`（keyboard/mouse/
-      scroll/screenshot 指令）并截图入 `_sub/desktop`（JPEG base64，字段对齐
-      `sub/eye`）—— brain 读图/发指令接线待做（见 eq12_server/README §6.2）
+      scroll/screenshot 指令），执行成功把截图入 `_sub/desktop`（JPEG base64，字段对齐
+      `sub/eye`）并附完成回执 `{'type':'done', 'command': <原始指令>}`——
+      brain 读图/发指令/配对回执接线待做（见 eq12_server/README §6.2）
 - [ ] eq12 端消费 `sub/eye`（视觉大模型/飞书/存卡）+ 触发 `pub/eye`/`pub/leg`/`pub/face`（大脑主动想看/想动/换表情）—— 待接
 - [ ] 4G(Cat.1) 场景 / 更多器官（head…）—— 待扩展
 
