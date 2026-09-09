@@ -94,16 +94,18 @@ silicon-life-v4/
 
 ### 3.1 MQTT 主题（EQ12 ↔ ESP32 器官）
 
+> 方向图例：**上行** = ESP32 发布、EQ12 订阅（`sub/*`）；**下行** = EQ12 发布、ESP32 订阅（`pub/*`）。
+
 | 主题 | 方向 | 载荷 | 生产者 | 消费者 |
 |---|---|---|---|---|
-| `sub/ear` | 器官 → 服务器 | 裸 PCM **16kHz / 16bit / mono**（原始麦克风） | ESP32 EarWorker | eq12 EarWorker(ASR) |
-| `pub/speak` | 服务器 → 器官 | 裸 PCM **24kHz / 16bit / mono**（TTS 输出） | eq12 SpeakWorker(TTS) | ESP32 SpeakWorker |
-| `pub/ear` | 服务器 → 器官 | `b'stop'` / `b'start'`（采集启停，回声抑制） | eq12 SpeakWorker | ESP32 EarWorker |
-| `pub/eye` | 服务器 → 器官 | `b'photo'`（拍照指令，一指令一张） | eq12（大脑，待接） | ESP32 CameraWorker |
-| `sub/eye` | 器官 → 服务器 | UTF-8 JSON：`{"type":"photo","time":...,"size":n,"width":W,"height":H,"data":"<base64 JPEG>"}` | ESP32 CameraWorker | eq12（视觉理解/转发，待接） |
-| `pub/leg` | 服务器 → 器官 | UTF-8 文本指令（同 v3 move）：`forward,50,2` / `pan,90` / `stop` / `center`… | eq12（大脑，待接） | ESP32 MoveWorker |
-| `sub/leg` | 器官 → 服务器 | UTF-8 文本完成回执：`done:<指令>`（如 `done:forward,50,2` / `done:pan,90`，说明刚完成哪条） | ESP32 MoveWorker | eq12（大脑，待接） |
-| `pub/face` | 服务器 → 器官 | UTF-8 文本指令（同 v3 screen）：`speak` / `happy` / `sleep`（可带 `[SCR]:` 前缀） | eq12（大脑，待接） | ESP32 ScreenWorker |
+| `sub/ear` | EQ12 ← ESP32（上行） | 裸 PCM **16kHz / 16bit / mono**（原始麦克风） | ESP32 EarWorker | eq12 EarWorker(ASR) |
+| `pub/speak` | EQ12 → ESP32（下行） | 裸 PCM **24kHz / 16bit / mono**（TTS 输出） | eq12 SpeakWorker(TTS) | ESP32 SpeakWorker |
+| `pub/ear` | EQ12 → ESP32（下行） | `b'stop'` / `b'start'`（采集启停，回声抑制） | eq12 SpeakWorker | ESP32 EarWorker |
+| `pub/eye` | EQ12 → ESP32（下行） | `b'photo'`（拍照指令，一指令一张） | eq12（大脑，待接） | ESP32 CameraWorker |
+| `sub/eye` | EQ12 ← ESP32（上行） | UTF-8 JSON：`{"type":"photo","time":...,"size":n,"width":W,"height":H,"data":"<base64 JPEG>"}` | ESP32 CameraWorker | eq12（视觉理解/转发，待接） |
+| `pub/leg` | EQ12 → ESP32（下行） | UTF-8 文本指令（同 v3 move）：`forward,50,2` / `pan,90` / `stop` / `center`… | eq12（大脑，待接） | ESP32 MoveWorker |
+| `sub/leg` | EQ12 ← ESP32（上行） | UTF-8 文本完成回执：`done:<指令>`（如 `done:forward,50,2` / `done:pan,90`，说明刚完成哪条） | ESP32 MoveWorker | eq12（大脑，待接） |
+| `pub/face` | EQ12 → ESP32（下行） | UTF-8 文本指令（同 v3 screen）：`speak` / `happy` / `sleep`（可带 `[SCR]:` 前缀） | eq12（大脑，待接） | ESP32 ScreenWorker |
 
 > eq12 框架的 `config.py` 还预留了 `pub/brain`、`sub/brain`、`pub/mouth`、`sub/mouth` 占位主题（暂无生产者/消费者），后续按需启用。
 
