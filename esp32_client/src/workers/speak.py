@@ -44,8 +44,6 @@ class SpeakWorker:
                 if self.stop_token is not None and msg is self.stop_token:
                     break
                 data = msg.payload
-                if self.echo is not None:
-                    self.echo.mark_spk()   # 喇叭有活动：ear 据此延后恢复上行
                 # 下行块可能很大，拆成 config.SPK_CHUNK 小块喂 I2S，
                 # 块间让出调度，避免长时间占死事件循环
                 for off in range(0, len(data), config.SPK_CHUNK):
@@ -54,5 +52,8 @@ class SpeakWorker:
                     except OSError:
                         break               # 喇叭异常：丢这一整块
                     await asyncio.sleep(0.001)
+                if self.echo is not None:
+                    # 这一条播完了：ear 据此在"队列空 + 静默够久"后才恢复上行
+                    self.echo.mark_played()
         finally:
             self.i2s.deinit()

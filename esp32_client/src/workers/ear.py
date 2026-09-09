@@ -50,16 +50,20 @@ class EarWorker:
         )
 
     def _echo_ok(self):
-        """回声闸：喇叭已静默够久才允许上行（默认 ECHO_GUARD_MS=400ms）。
+        """回声闸：喇叭"确实播完了"才允许上行。
 
-        EQ12 在语音"发完"即发 b'start'，但喇叭缓冲尾巴可能还在播；
-        若立刻恢复上行会录到自己的声音。这里看 speak 最后一次活动的
-        时间戳（由 SpeakWorker 每次收到音频刷新），静默足够才放行。
+        EQ12 发 b'start' 时 TTS 推流常快于实时播放，pub/speak 队列/喇叭缓冲
+        可能还有几秒没播。条件：pub/speak 队列已空 **且** 距最近一次播完
+        （echo.last_write）满 ECHO_GUARD_MS —— 长回复的尾巴也等完了才恢复，
+        避免录到自己声音造成自答循环。
         """
         if self.echo is None:
             return True
+        q = self.queues.get('pub/speak')
+        if q is not None and q.qsize():
+            return False                 # 还有音频排队未播
         now = _ticks_ms()
-        return _ticks_diff(now, self.echo.last_spk) >= config.ECHO_GUARD_MS
+        return _ticks_diff(now, self.echo.last_write) >= config.ECHO_GUARD_MS
 
     async def run(self):
         ctl = asyncio.create_task(self._control())

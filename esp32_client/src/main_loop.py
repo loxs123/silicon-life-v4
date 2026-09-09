@@ -39,18 +39,19 @@ _ACTIVE = False    # 防重复启动：同一进程内只允许一个 MainLoop.r
 
 
 class _EchoGate:
-    """回声抑制联动闸：ear 与 speak 共享的"喇叭最近活动"状态。
+    """回声抑制联动闸：ear 与 speak 共享的"喇叭最近播完一块的时间"。
 
-    SpeakWorker 每收到一块下行音频就刷新 last_spk；EarWorker 收到 b'start'
-    后要等喇叭静默 ≥ ECHO_GUARD_MS 才恢复上行（_echo_ok），避免录到
-    自己播放的缓冲尾巴 → 自答回声。
+    SpeakWorker 每播完一整条 pub/speak 消息就刷新 last_write；EarWorker
+    只有当 pub/speak 队列已空 **且** 距 last_write 满 ECHO_GUARD_MS 才恢复
+    上行——即"喇叭确实把缓冲尾巴都放完了"才放行，而不是收到 b'start' 就
+    恢复（b'start' 到达时 TTS 推流常常比实时播放快，缓冲还有几秒没播）。
     """
 
     def __init__(self):
-        self.last_spk = 0        # 最近一次下行音频活动时刻（ticks_ms）
+        self.last_write = 0        # 最近一次播完一块的 ticks_ms
 
-    def mark_spk(self):
-        self.last_spk = _ticks_ms()
+    def mark_played(self):
+        self.last_write = _ticks_ms()
 
 
 class _Msg:
@@ -81,11 +82,11 @@ class _Queue:
         self._evt.set()
 
     def drain(self):
-        """丢空队列积压（回声抑制：b'stop' 时清掉 pub/speak 未播缓冲）。
-
-        不置/不清事件：get() 的 while 循环会自然重新等待，不会丢唤醒。
-        """
+        """丢空队列积压。"""
         self._items = []
+
+    def qsize(self):
+        return len(self._items)
 
     async def get(self):
         while not self._items:
@@ -137,7 +138,13 @@ class MainLoop:
         """
         global _ACTIVE
         if _ACTIVE:
-            print('[MainLoop] 已在运行，忽略重复启动（先 Ctrl+C / 复位停掉旧的）')
+            # MicroPython 坑：Ctrl+C 的 KeyboardInterrupt 可能打在 ear 的
+            # I2S 阻塞读上，直接穿透 asyncio.run，主任务 finally 没执行，
+            # _ACTIVE 会残留 → 再启动被误拦。此时只能软复位清场：
+            #   import machine; machine.reset()    或  Ctrl+D
+            print('[MainLoop] 检测到已有实例标记，忽略重复启动')
+            print('[MainLoop] 若刚 Ctrl+C 中断过：请执行 machine.reset()'
+                  '（或 Ctrl+D）复位后再启动')
             return
         _ACTIVE = True
         for t in self.sub_topics:
@@ -155,6 +162,8 @@ class MainLoop:
             await self._stopped.wait()
         except asyncio.CancelledError:
             raise                                       # Ctrl+C：交给 finally 收尾
+        except KeyboardInterrupt:
+            pass                                        # 中断落在主任务时也走 finally
         finally:
             await self.stop()                           # 兜底：无论怎么退出都停干净
             _ACTIVE = False
