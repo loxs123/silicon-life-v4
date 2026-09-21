@@ -1,37 +1,13 @@
 """
-BrainWorker —— "大脑"器官:ASR 文本进来,流式调大模型,成句即送 TTS
-====================================================================
-
-数据流位置:
-    sub/ear 原始音频 → EarWorker(ASR) → queues['asr']   ← 本 worker 在此消费
-    BrainWorker(流式 LLM) → queues['tts'] → SpeakWorker(TTS)
-        → queues['pub/speak'] → MQTT → ESP32 出声
-依赖:
-    pip install dashscope
-    set DASHSCOPE_API_KEY=sk-xxx
+BrainWorker —— "大脑"器官
 """
 
 import os
 import re
 import time
-from http import HTTPStatus
 from queue import Queue
 
-import dashscope
-from dashscope import Generation
-
-# ---------- 配置 ----------
-# API Key 优先从环境变量读取;也可以直接写 dashscope.api_key = 'sk-xxx'
-dashscope.api_key = os.environ.get('DASHSCOPE_API_KEY', '')
-
-INPUT_QUEUE = 'asr'   # 消费:内部流水线队列,ear_worker 投进来的识别文本
-OUTPUT_QUEUE = 'tts'  # 产出:内部流水线队列,SpeakWorker 消费做 TTS
-
-MODEL = 'qwen-plus'   # 对话模型;可换 qwen-flash(更快更省)/ qwen-turbo / qwen-max
-SYSTEM_PROMPT = '你是 EQ12「硅基生命」机器人。回答要口语化、简短,一般一两句话,像在跟人面对面聊天。'
-MAX_HISTORY = 12      # 保留的最近对话条数(不含 system)
-REPLY_TIMEOUT = 60.0  # 单次回复最长等待秒数,防网络异常导致永久卡住
-SENT_END = re.compile(r'[。！？!?]')   # 句末标点:流式输出里凑到它就切一句送给 TTS
+from ..core.pipeline import Pipeline
 
 class BrainWorker:
     """消费 asr 队列的文本,流式调用模型,把完整句子逐句投进 tts 队列。
@@ -40,89 +16,11 @@ class BrainWorker:
     run() get() 到它即退出(不把它当业务文本),用于优雅停机。
     """
 
-    def __init__(self, queues: dict[str, Queue], stop_token=None):
+    def __init__(self, queues: dict[str, Queue]):
         self.queues = queues
-        self.stop_token = stop_token
-        self.messages = [{'role': 'system', 'content': SYSTEM_PROMPT}]
 
     def run(self):
-        if not dashscope.api_key:
-            print('[Brain] 警告: 未设置 DASHSCOPE_API_KEY,调用将失败', flush=True)
-        print('[Brain] BrainWorker 已启动,等待 %s 队列文本...' % INPUT_QUEUE,
-              flush=True)
+        p = Pipeline(queues)
         while True:
-            item = self.queues[INPUT_QUEUE].get()
-            if self.stop_token is not None and item is self.stop_token:
-                break
-            text = item
-            text = str(text).strip()
-            if not text:
-                continue
-            self._reply(text)   # 阻塞到整段回复生成完;内部全兜底,不外抛
-
-    # ------------------------------------------------------- 回复一句
-    def _reply(self, text):
-        print('[Brain] 听到: %s' % text[:80], flush=True)
-        self.messages.append({'role': 'user', 'content': text})
-        sentences = []   # 收到的完整句子(用于拼回整段回复,写进历史)
-        try:
-            # 每来一句完整的话,立刻投给 tts,不等模型把整段收齐
-            for sent in self._stream_sentences():
-                sentences.append(sent)
-                self.queues[OUTPUT_QUEUE].put(sent)
-                print('[Brain] → %s (%d 字,成句即送)'
-                      % (sent[:60], len(sent)), flush=True)
-        except Exception as e:
-            # 中途失败:已送出的句子照播(收不回),剩余部分放弃
-            print('[Brain] 调用中断,已送出的句子照播: %s' % e, flush=True)
-            self.messages.pop()   # 撤掉没答完的用户消息,不污染后续上下文
-            return
-        reply = ''.join(sentences).strip()
-        if not reply:
-            print('[Brain] 模型无输出,本句放弃', flush=True)
-            self.messages.pop()
-            return
-        self.messages.append({'role': 'assistant', 'content': reply})
-        # 历史裁剪:只保留 system + 最近 MAX_HISTORY 条对话
-        if len(self.messages) - 1 > MAX_HISTORY:
-            self.messages = [self.messages[0]] + self.messages[-MAX_HISTORY:]
-        print('[Brain] 整句回复完毕 (%d 字,共 %d 句送 tts)'
-              % (len(reply), len(sentences)), flush=True)
-
-    def _stream_sentences(self):
-        """流式调用模型,边收边打印增量;凑成完整句子就 yield,流结束把
-        没有句号的尾巴也作为最后一句 yield。异常沿生成器抛给调用方。"""
-        buf = ''
-        t0 = time.perf_counter()
-        responses = Generation.call(model=MODEL,
-                                    messages=self.messages,
-                                    result_format='message',
-                                    stream=True,
-                                    incremental_output=True)
-        for chunk in responses:
-            if time.perf_counter() - t0 > REPLY_TIMEOUT:
-                print('[Brain] 回复超时(%.0fs),按已收内容收尾'
-                      % REPLY_TIMEOUT, flush=True)
-                break
-            if chunk.status_code != HTTPStatus.OK:
-                raise RuntimeError('status=%s code=%s msg=%s' % (
-                    chunk.status_code, chunk.code, chunk.message))
-            delta = chunk.output.choices[0]['message']['content']
-            if not delta:
-                continue
-            buf += delta
-            print(delta, end='', flush=True)
-            # 句末标点一到,立即把前面的完整句子切出去
-            while True:
-                m = SENT_END.search(buf)
-                if m is None:
-                    break
-                sent = buf[:m.end()].strip()
-                buf = buf[m.end():]
-                if sent and any(ch.isalnum() for ch in sent):
-                    yield sent
-        print(flush=True)   # 收尾:结束上面行内流式打印
-        tail = buf.strip()
-        # 同上:纯 emoji 尾巴丢弃,避免最后一句 TTS 断连"没说完就停了"
-        if tail and any(ch.isalnum() for ch in tail):
-            yield tail
+            p.process()
+            time.sleep(0.1)
