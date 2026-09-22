@@ -85,6 +85,19 @@ def llm_stream(self):
     self.user_info['output'] = full
 ```
 
+## 桌面版可运行示例（不接 ESP32）
+
+`hook_examples/` 是一条**只在这台电脑上**跑得通的链：飞书进来 → 看/动本机屏幕键鼠
+→ 飞书回文字 + 图片，四个 ESP32 主题一个都不用，也不需要 broker 和飞书凭据：
+
+```bash
+cd eq12_server && python -m src.core.hook_examples.demo
+```
+
+六个 hook、队列怎么配对、两个已发现的坑（`read_screen` 的有界等待、
+`_sub/desktop` 上 `done`/`screen` 的先后和文档不一致），都写在
+`hook_examples/README.md` 里。
+
 ## 几条约定
 
 - 私有常量放自己文件顶部（同 `ear_worker.py` 的 `SAMPLE_RATE` 风格）；跨 hook 共用的才上 `src/config.py`

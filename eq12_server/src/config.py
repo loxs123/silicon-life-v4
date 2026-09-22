@@ -1,7 +1,10 @@
 
 
-BROKER = "192.168.0.108"   # local Mosquitto broker
+BROKER = "127.0.0.1"   # 本机 Mosquitto 2.1.2（Windows 服务 "Mosquitto Broker"，只监听 loopback）
+# 想切回 EQ12 那台 broker：把上面改成 "192.168.0.108"（实测同样可用、允许匿名收发）
 PORT = 1883            # default MQTT port
+
+USE_MQTT = False        # False = 不连 broker，只跑飞书/桌面这类进程内 worker，调飞书和电脑用
 
 SUB_TOPICS = [
     {

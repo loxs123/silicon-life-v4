@@ -159,6 +159,11 @@ class DesktopWorker:
     gui 可注入替身（默认 pyautogui 模块），测试时记录调用而不真动鼠标键盘。
     """
 
+    # 类属性别名：main_loop.py 里是按 `DesktopWorker.SUB_QUEUE` 取队列名的，
+    # 而队列名本身是上面的模块级常量（模块级那份照旧，外部直接 import 用）。
+    SUB_QUEUE = SUB_QUEUE
+    PUB_QUEUE = PUB_QUEUE
+
     def __init__(self, queues: dict[str, Queue], stop_token=None, gui=None):
         self.queues = queues
         self.stop_token = stop_token

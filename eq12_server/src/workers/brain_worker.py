@@ -10,17 +10,13 @@ from queue import Queue
 from ..core.pipeline import Pipeline
 
 class BrainWorker:
-    """消费 asr 队列的文本,流式调用模型,把完整句子逐句投进 tts 队列。
-
-    stop_token 是主循环停机时投进 pub/*、sub/* 队列的 _STOP 哨兵对象;
-    run() get() 到它即退出(不把它当业务文本),用于优雅停机。
-    """
+    """消费 asr 队列的文本,流式调用模型,把完整句子逐句投进 tts 队列。"""
 
     def __init__(self, queues: dict[str, Queue]):
         self.queues = queues
 
     def run(self):
-        p = Pipeline(queues)
+        p = Pipeline(self.queues)      # hooks 在 Pipeline.__init__ 里注册好了
         while True:
             p.process()
             time.sleep(0.1)

@@ -35,8 +35,9 @@ eq12_server 进程内直连飞书 OpenAPI（WebSocket 长连接收事件、HTTPS
     （飞书自建应用凭据；tenant_access_token 由 SDK 自动获取/缓存/续期）
 
 备注：
-    - lark-oapi 未安装时本模块可正常 import（降级为 None），run() 启动时打印
-      提示并返回，eq12_server 其余 worker 不受影响。
+    - lark-oapi 是惰性导入的（_load_lark()）：它在模块顶部导一次要 ~10 秒
+      （上万个子模块），所以只在 run() 里真连飞书时才导，不拖慢启动。
+      未安装时本模块可正常 import，run() 打印提示并返回，其余 worker 不受影响。
     - 默认连接国内飞书（open.feishu.cn）；若用 Lark 国际版应用，需给 client
       显式指定 domain=lark.Domain.Lark。
 """
@@ -54,23 +55,36 @@ SUB_QUEUE = '_sub/feishu'   # 收：收到消息入队（下游 brain/桥接 消
 PUB_QUEUE = '_pub/feishu'   # 发：出站消息队列（本 worker 消费并发送）
 FEISHU_PREFIX = '[FEISHU]:'  # 出站文字消息前缀（与 v3 一致）
 
-# lark-oapi 官方 SDK：装不上/版本差异都不应拖垮 eq12_server，
-# 模块顶部只做“可导入则导入”的降级，具体报错在 run() 里提示。
-try:
-    import lark_oapi as _lark
-    from lark_oapi.api.im.v1 import (
-        P2ImMessageReceiveV1,
-        CreateImageRequest,
-        CreateImageRequestBody,
-        CreateMessageRequest,
-        CreateMessageRequestBody,
-        ReplyMessageRequest,
-        ReplyMessageRequestBody,
-    )
-    _LARK_IMPORT_ERR = None
-except Exception as _e:  # noqa: E722  ImportError 或 SDK 版本缺符号都算
-    _lark = None
-    _LARK_IMPORT_ERR = _e
+# lark-oapi 官方 SDK：装不上/版本差异都不应拖垮 eq12_server。
+# 这 SDK 是个生成式巨无霸（本机 10727 个子模块），import 一次约 10 秒 —— 所以
+# 不在模块顶部导，改成 run() 里真要连飞书时才导：run() 跑在自己的线程里，
+# 不会拖住启动；具体报错也挪到那里提示。
+_lark = None
+_LARK_IMPORT_ERR = None
+CreateImageRequest = CreateImageRequestBody = None
+CreateMessageRequest = CreateMessageRequestBody = None
+ReplyMessageRequest = ReplyMessageRequestBody = None
+
+
+def _load_lark():
+    """惰性 import lark_oapi（只导一次）：成功返回 True，失败返回 False。"""
+    global _lark, _LARK_IMPORT_ERR
+    global CreateImageRequest, CreateImageRequestBody
+    global CreateMessageRequest, CreateMessageRequestBody
+    global ReplyMessageRequest, ReplyMessageRequestBody
+    if _lark is not None or _LARK_IMPORT_ERR is not None:
+        return _lark is not None
+    try:
+        import lark_oapi
+        from lark_oapi.api.im.v1 import (
+            CreateImageRequest, CreateImageRequestBody,
+            CreateMessageRequest, CreateMessageRequestBody,
+            ReplyMessageRequest, ReplyMessageRequestBody,
+        )
+        _lark = lark_oapi
+    except Exception as e:  # noqa: E722  ImportError 或 SDK 版本缺符号都算
+        _LARK_IMPORT_ERR = e
+    return _lark is not None
 
 
 def _attr(obj, name, default=''):
@@ -122,6 +136,11 @@ class FeishuWorker:
     向它们投哨兵 —— 与消费内部 asr/tts 队列的 worker 一样随进程退出（daemon）。
     """
 
+    # 类属性别名：main_loop.py 里是按 `FeishuWorker.SUB_QUEUE` 取队列名的，
+    # 而队列名本身是上面的模块级常量（模块级那份照旧，外部直接 import 用）。
+    SUB_QUEUE = SUB_QUEUE
+    PUB_QUEUE = PUB_QUEUE
+
     def __init__(self, queues: dict[str, Queue], stop_token=None,
                  app_id=None, app_secret=None):
         self.queues = queues
@@ -161,7 +180,7 @@ class FeishuWorker:
             return
         message_id = _attr(message, 'message_id')
         chat_id = _attr(message, 'chat_id')
-        mtype = _attr(message, 'msg_type')
+        mtype = _attr(message, 'message_type') or _attr(message, 'msg_type')
         if chat_id:
             self._chat_id = chat_id       # 记住最近会话（发图兜底目标）
 
@@ -337,11 +356,6 @@ class FeishuWorker:
     # ============================ 主循环 / 生命周期 ========================
     def run(self):
         """自检 → 启动长连接线程（收）→ 阻塞消费 _pub/feishu（发）。"""
-        if _lark is None:
-            print('[Feishu] lark-oapi 不可用，飞书 worker 不启动'
-                  '（pip install lark-oapi；原因为 %s）'
-                  % _LARK_IMPORT_ERR, flush=True)
-            return
         missing = [k for k in (SUB_QUEUE, PUB_QUEUE) if k not in self.queues]
         if missing:
             print('[Feishu] 缺少内部队列 %s：请在 main_loop.py 里创建'
@@ -350,6 +364,13 @@ class FeishuWorker:
         if not (self.app_id and self.app_secret):
             print('[Feishu] 警告: 未设置 FEISHU_APP_ID / FEISHU_APP_SECRET，'
                   '飞书收发不可用（见 set_dashscope_env.cmd）', flush=True)
+            return
+        print('[Feishu] 正在加载 lark-oapi（上万个子模块，本机约 10 秒）…',
+              flush=True)
+        if not _load_lark():
+            print('[Feishu] lark-oapi 不可用，飞书 worker 不启动'
+                  '（pip install lark-oapi；原因为 %s）'
+                  % _LARK_IMPORT_ERR, flush=True)
             return
         print('[Feishu] FeishuWorker 已启动'
               '（收→入队 %s，发←消费 %s）' % (SUB_QUEUE, PUB_QUEUE), flush=True)

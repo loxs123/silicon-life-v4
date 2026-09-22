@@ -6,6 +6,7 @@ EQ12 主循环框架
     —— 不连网、不起线程，因此可以脱离真实 broker 单独测试。
   * start()  启动全部业务 worker 和每主题发送线程（仍不连 broker，测试时可注入假 client）。
   * run()    连接 broker 并阻塞运行网络循环；Ctrl+C 或从其它线程调 stop() 后干净退出。
+             config.USE_MQTT = False 时不连 broker，只跑进程内 worker（调飞书/桌面用）。
   * stop()   幂等收尾：向 pub/*、sub/* 前缀队列投 _STOP 哨兵、断开 broker、join 线程。
 
 线程模型：所有长生命周期线程（业务 worker + 每 pub 主题一个专职发送线程）
@@ -13,10 +14,11 @@ EQ12 主循环框架
 """
 import queue
 import threading
+import time
 
 import paho.mqtt.client as mqtt
 
-from .config import BROKER, PORT, PUB_TOPICS, SUB_TOPICS
+from .config import BROKER, PORT, PUB_TOPICS, SUB_TOPICS, USE_MQTT
 from .workers import (EarWorker, BrainWorker, SpeakWorker, FeishuWorker,
                       DesktopWorker)
 
@@ -53,7 +55,7 @@ class MainLoop:
         # ---- worker 登记：新器官在这里加一行，start() 即统一启动 ----
         # 流水线：ear(ASR) → asr 队列 → brain(LLM) → tts 队列 → speak(TTS) → pub/speak
         ear = EarWorker(self.queues, stop_token=_STOP)
-        brain = BrainWorker(self.queues, stop_token=_STOP)
+        brain = BrainWorker(self.queues)
         speak = SpeakWorker(self.queues, stop_token=_STOP)
         feishu = FeishuWorker(self.queues, stop_token=_STOP)
         desktop = DesktopWorker(self.queues, stop_token=_STOP)
@@ -84,6 +86,11 @@ class MainLoop:
         """连接 broker 并阻塞运行网络循环；Ctrl+C 或其它线程调 stop() 后干净退出。"""
         self.start()
         try:
+            if not USE_MQTT:
+                print("[MainLoop] config.USE_MQTT = False：不连 broker，"
+                      "只跑飞书 / 桌面这些进程内 worker")
+                while True:               # 主线程挂着等 Ctrl+C
+                    time.sleep(0.5)
             try:
                 self.client.connect(self.broker, self.port, keepalive=60)
             except OSError as e:
@@ -164,3 +171,7 @@ class MainLoop:
             except (ValueError, RuntimeError, OSError) as e:
                 print(f"[{q_name}] 发送失败: {e}")
             # 断线恢复后继续跑，循环不因此死掉
+
+
+if __name__ == '__main__':
+    MainLoop().run()
