@@ -8,7 +8,7 @@ def probe_feishu(self):
 
     text = msg.get('text')
     if text:
-        reply = '%s%s|%s' % (FEISHU_PREFIX, msg['message_id'], text)
+        reply = FEISHU_PREFIX + msg['message_id'] + '|' + text
         self.queues[QUEUE_FEISHU_PUB].put(reply)
         print('[brain] probe_feishu → %s: %s' % (QUEUE_FEISHU_PUB, reply),
               flush=True)
