@@ -1,20 +1,15 @@
 from __future__ import annotations   # 延迟求值注解:Callback 里可前向引用后定义的 EarWorker
 
 from queue import Queue
-import os
-import sys
 import time
 
 import dashscope
 from dashscope.audio.asr import Recognition, RecognitionCallback, RecognitionResult
 
-# ---------- 配置 ----------
-# API Key 优先从环境变量读取；也可以直接写 dashscope.api_key = 'sk-xxx'
-dashscope.api_key = os.environ.get('DASHSCOPE_API_KEY', '')
-SAMPLE_RATE = 16000   # 支持 8000 / 16000
-CHANNELS = 1          # 单声道
-BLOCK_SIZE = 512      # PyAudio 每次读取的帧数(喂 ASR 无 512 限制，此处仅为读块大小)
-FORMAT = 'pcm'        # int16 pcm
+from ..config import (ASR_FORMAT, ASR_MODEL, ASR_SAMPLE_RATE,
+                      DASHSCOPE_API_KEY, QUEUE_ASR, QUEUE_EAR_IN)
+
+dashscope.api_key = DASHSCOPE_API_KEY
 
 class Callback(RecognitionCallback):
     """把每一帧识别结果实时打印到终端。"""
@@ -43,7 +38,7 @@ class Callback(RecognitionCallback):
             text = sentence['text']
             if sentence['sentence_end'] and text:
                 print(f'[done]{text}')
-                self.obj.queues['asr'].put(text)
+                self.obj.queues[QUEUE_ASR].put(text)
 
 class EarWorker:
     """每器官一个 worker：消费 sub/ear 入站队列做 ASR 等。
@@ -62,7 +57,7 @@ class EarWorker:
         # worker 线程,否则之后所有语音都不再被识别;要自动重建会话继续服务。
         recognition = self._new_recognition()
         while True:
-            item = self.queues['sub/ear'].get()
+            item = self.queues[QUEUE_EAR_IN].get()
             if self.stop_token is not None and item is self.stop_token:
                 break
             sound = item.payload
@@ -82,9 +77,9 @@ class EarWorker:
 
     def _new_recognition(self):
         recognition = Recognition(
-            model='qwen-audio-3.0-asr-flash-streaming',
-            format=FORMAT,
-            sample_rate=SAMPLE_RATE,
+            model=ASR_MODEL,
+            format=ASR_FORMAT,
+            sample_rate=ASR_SAMPLE_RATE,
             semantic_punctuation_enabled=True,  # 开启标点，便于判断一句话结束
             callback=Callback(self),
         )

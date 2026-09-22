@@ -1,7 +1,7 @@
 """[测试] 截一次屏，再把鼠标顶到右上角。"""
 import queue
 
-from ...workers.desktop_worker import PUB_QUEUE, SUB_QUEUE
+from src.config import QUEUE_DESKTOP_PUB, QUEUE_DESKTOP_SUB
 
 COMMANDS = (
     {'type': 'screenshot'},
@@ -16,17 +16,19 @@ def probe_desktop(self):
     self.user_info['probe_desktop_done'] = True
 
     for cmd in COMMANDS:
-        self.queues[PUB_QUEUE].put(cmd)
-        print('[brain] probe_desktop → %s: %s' % (PUB_QUEUE, cmd), flush=True)
+        self.queues[QUEUE_DESKTOP_PUB].put(cmd)
+        print('[brain] probe_desktop → %s: %s' % (QUEUE_DESKTOP_PUB, cmd),
+              flush=True)
 
     for _ in range(4):
         try:
-            item = self.queues[SUB_QUEUE].get(timeout=3)
+            item = self.queues[QUEUE_DESKTOP_SUB].get(timeout=3)
         except queue.Empty:
             break
         if item.get('type') == 'screen':
             print('[brain] probe_desktop ← %s: 截图 %sx%s %s 字节'
-                  % (SUB_QUEUE, item['width'], item['height'], item['size']),
-                  flush=True)
+                  % (QUEUE_DESKTOP_SUB, item['width'], item['height'],
+                     item['size']), flush=True)
         else:
-            print('[brain] probe_desktop ← %s: %s' % (SUB_QUEUE, item), flush=True)
+            print('[brain] probe_desktop ← %s: %s' % (QUEUE_DESKTOP_SUB, item),
+                  flush=True)

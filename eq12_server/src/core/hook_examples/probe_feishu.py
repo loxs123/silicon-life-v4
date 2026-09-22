@@ -1,13 +1,14 @@
 """[测试] 等一条飞书消息，把它原样发回去。"""
-from ...workers.feishu_worker import PUB_QUEUE, SUB_QUEUE
+from src.config import FEISHU_PREFIX, QUEUE_FEISHU_PUB, QUEUE_FEISHU_SUB
 
 
 def probe_feishu(self):
-    msg = self.queues[SUB_QUEUE].get()
-    print('[brain] probe_feishu ← %s: %s' % (SUB_QUEUE, msg), flush=True)
+    msg = self.queues[QUEUE_FEISHU_SUB].get()
+    print('[brain] probe_feishu ← %s: %s' % (QUEUE_FEISHU_SUB, msg), flush=True)
 
     text = msg.get('text')
     if text:
-        reply = '[FEISHU]:%s|%s' % (msg['message_id'], text)
-        self.queues[PUB_QUEUE].put(reply)
-        print('[brain] probe_feishu → %s: %s' % (PUB_QUEUE, reply), flush=True)
+        reply = '%s%s|%s' % (FEISHU_PREFIX, msg['message_id'], text)
+        self.queues[QUEUE_FEISHU_PUB].put(reply)
+        print('[brain] probe_feishu → %s: %s' % (QUEUE_FEISHU_PUB, reply),
+              flush=True)

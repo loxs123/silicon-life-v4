@@ -82,7 +82,7 @@ done:stop              # 已停
 **载荷** 24k / 16bit / mono **裸 PCM** `bytes`
 
 - **不是**上行 `sub/ear` 的 16k，两端速率不同
-- 每样本右移 `VOLUME_DIV=4` 位 = **1/16 音量（-24dB）**，ESP32 端只做裸播放
+- 每样本右移 `config.TTS_VOLUME_DIV=4` 位 = **1/16 音量（-24dB）**，ESP32 端只做裸播放
 - 一句 TTS 会被切成多段 PCM 陆续投递（`response.audio.delta` 事件逐段转发）
 
 ## `pub/ear` —— 采集启停指令
@@ -281,7 +281,7 @@ center            # 回中
 | `size` | `int` | JPEG 字节数 |
 | `width` / `height` | `int` | 屏幕分辨率 |
 | `fmt` | `str` | 固定 `"jpeg"`（`sub/eye` 没有这个字段）|
-| `data` | `str` | base64 JPEG，质量 `JPEG_QUALITY=85` |
+| `data` | `str` | base64 JPEG，质量 `config.DESKTOP_JPEG_QUALITY=85` |
 
 ```python
 {'type': 'screen', 'time': 1748764800, 'size': 312044,

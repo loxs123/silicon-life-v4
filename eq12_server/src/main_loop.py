@@ -18,7 +18,9 @@ import time
 
 import paho.mqtt.client as mqtt
 
-from .config import BROKER, PORT, PUB_TOPICS, SUB_TOPICS, USE_MQTT
+from .config import (BROKER, PORT, PUB_TOPICS, QUEUE_ASR, QUEUE_DESKTOP_PUB,
+                     QUEUE_DESKTOP_SUB, QUEUE_FEISHU_PUB, QUEUE_FEISHU_SUB,
+                     QUEUE_TTS, SUB_TOPICS, USE_MQTT)
 from .workers import (EarWorker, BrainWorker, SpeakWorker, FeishuWorker,
                       DesktopWorker)
 
@@ -39,16 +41,16 @@ class MainLoop:
             for t in SUB_TOPICS + PUB_TOPICS
         }
         # 内部流水线队列：不直接对应 MQTT 主题（如 ASR 文本 -> TTS 语音）
-        self.queues['asr'] = queue.Queue()
-        self.queues['tts'] = queue.Queue()
+        self.queues[QUEUE_ASR] = queue.Queue()
+        self.queues[QUEUE_TTS] = queue.Queue()
         # 飞书网关内部队列（收发消息，进程内直连飞书 OpenAPI，不经 MQTT）。
         # 名称带 '_' 前缀：纯内部队列，不被当作 MQTT 主题，也不会被
         # stop() 哨兵（只看 'pub/'、'sub/' 前缀）或专职发送线程接管。
-        self.queues[FeishuWorker.SUB_QUEUE] = queue.Queue()   # 收：收到消息入队
-        self.queues[FeishuWorker.PUB_QUEUE] = queue.Queue()   # 发：出站消息队列
+        self.queues[QUEUE_FEISHU_SUB] = queue.Queue()   # 收：收到消息入队
+        self.queues[QUEUE_FEISHU_PUB] = queue.Queue()   # 发：出站消息队列
         # 桌面操作内部队列（同一 Windows 会话里模拟键鼠/滚轮/截屏，不经 MQTT）
-        self.queues[DesktopWorker.SUB_QUEUE] = queue.Queue()  # 出：截图+完成回执入队
-        self.queues[DesktopWorker.PUB_QUEUE] = queue.Queue()  # 入：电脑控制指令
+        self.queues[QUEUE_DESKTOP_SUB] = queue.Queue()  # 出：截图+完成回执入队
+        self.queues[QUEUE_DESKTOP_PUB] = queue.Queue()  # 入：电脑控制指令
 
         self.qos = {t['name']: t['qos'] for t in SUB_TOPICS + PUB_TOPICS}
 

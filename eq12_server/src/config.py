@@ -1,5 +1,7 @@
 
 
+import os
+
 BROKER = "127.0.0.1"   # 本机 Mosquitto 2.1.2（Windows 服务 "Mosquitto Broker"，只监听 loopback）
 # 想切回 EQ12 那台 broker：把上面改成 "192.168.0.108"（实测同样可用、允许匿名收发）
 PORT = 1883            # default MQTT port
@@ -63,3 +65,51 @@ PUB_TOPICS = [
         'qos': 0,
     }
 ]
+
+
+# ======================= 队列名 =======================
+# 队列清单 / 载荷格式见 core/queues.md。MQTT 主题名用上面的 SUB_TOPICS / PUB_TOPICS。
+QUEUE_ASR = 'asr'                   # 耳朵 → 大脑：一句识别文本
+QUEUE_TTS = 'tts'                   # 大脑 → 嘴：要说的文本
+QUEUE_EAR_IN = 'sub/ear'            # 耳朵：ESP32 上行原始音频
+QUEUE_SPEAK_OUT = 'pub/speak'       # 嘴：下行 TTS 语音流（ESP32 订阅播放）
+QUEUE_EAR_CTRL = 'pub/ear'          # 嘴 → 耳朵：采集启停（回声抑制）
+QUEUE_FEISHU_SUB = '_sub/feishu'    # 飞书收：收到消息入队
+QUEUE_FEISHU_PUB = '_pub/feishu'    # 飞书发：出站消息队列
+QUEUE_DESKTOP_SUB = '_sub/desktop'  # 桌面出：截图 + 完成回执
+QUEUE_DESKTOP_PUB = '_pub/desktop'  # 桌面入：电脑控制指令
+
+# ======================= 凭据（环境变量，见 set_dashscope_env.cmd）=======================
+DASHSCOPE_API_KEY = os.environ.get('DASHSCOPE_API_KEY', '')
+FEISHU_APP_ID = os.environ.get('FEISHU_APP_ID', '')
+FEISHU_APP_SECRET = os.environ.get('FEISHU_APP_SECRET', '')
+
+# ======================= 耳朵 / ASR =======================
+ASR_MODEL = 'qwen-audio-3.0-asr-flash-streaming'
+ASR_FORMAT = 'pcm'            # int16 pcm
+ASR_SAMPLE_RATE = 16000       # 支持 8000 / 16000
+ASR_CHANNELS = 1              # 单声道
+ASR_BLOCK_SIZE = 512          # 读块大小（喂 ASR 本身没有 512 限制）
+
+# ======================= 嘴 / TTS =======================
+TTS_WS_URL = 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime'
+# 专属接入点示例：'wss://xxx.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime'
+TTS_MODEL = 'qwen3-tts-flash-realtime'
+TTS_VOICE = 'Chelsie'         # 音色
+TTS_SPEED = 1.2               # 语速倍率：0.5~2.0（1.0 正常）
+TTS_CONNECT_TIMEOUT = 6.0     # 建连（含后台预热）最长等待秒数
+TTS_SENTENCE_TIMEOUT = 30.0   # 单句合成超时秒数，防网络异常永久卡住
+# 下行音量（数字衰减，在服务器侧压好再发 pub/speak，ESP32 只裸播）：
+# int16 PCM 每样本右移 TTS_VOLUME_DIV 位，每移 1 位 = -6dB
+#   1 原声 0dB | 2 = 1/4 -12dB | 3 = 1/8 -18dB | 4 = 1/16 -24dB
+# MAX98357 GAIN 悬空时增益偏高、实测偏吵 → 现在 4（1/16）；太吵 +1，太轻 -1。
+TTS_VOLUME_DIV = 4
+EAR_STOP = b'stop'            # 出声前推给耳朵：停采，防 mic 收到自己的声音
+EAR_START = b'start'          # 播完/放弃后推给耳朵：恢复采集
+
+# ======================= 飞书 =======================
+FEISHU_PREFIX = '[FEISHU]:'   # 出站文字消息前缀（与 v3 一致）
+
+# ======================= 桌面 =======================
+DESKTOP_HOLD_S = 0.05         # keyboard 指令缺省按压时长（秒）
+DESKTOP_JPEG_QUALITY = 85     # 截图 JPEG 质量（0-100）

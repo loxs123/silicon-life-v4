@@ -45,7 +45,7 @@ _sub/desktop 截图载荷（字段对齐 esp32 的 sub/eye 照片 JSON，只是�
         #   不回执——下游如需配对/超时兜底，用 type 区分 screen / done。
 
 依赖：
-    pip install pyautogui        # 键鼠/滚轮 + 截屏（Windows 下截图自动依赖 Pillow）
+    pip install pyautogui Pillow   # 键鼠/滚轮 + 截屏；硬依赖，缺了直接 import 报错
 
 说明：
     - 本 worker 执行的是 OS 级键鼠指令，等同真人在操作电脑；只消费 _pub/desktop
@@ -54,8 +54,6 @@ _sub/desktop 截图载荷（字段对齐 esp32 的 sub/eye 照片 JSON，只是�
       需要能点屏幕角上的关闭按钮/开始菜单，四角触发会误伤。
     - 按住组合键期间若某键 keyDown 失败，finally 会把已按下的键全部抬起，
       避免键盘卡键。
-    - pyautogui 未安装时模块可正常 import（降级为 None），run() 打印提示即退出，
-      不影响 eq12_server 其余 worker。
 """
 
 from __future__ import annotations
@@ -66,25 +64,11 @@ import re
 import time
 from queue import Queue
 
-try:
-    import pyautogui as _pyautogui
-    _GUI_IMPORT_ERR = None
-except Exception as _e:  # noqa: E722
-    _pyautogui = None
-    _GUI_IMPORT_ERR = _e
+import pyautogui as _pyautogui
+from PIL import Image as _PIL_Image   # 截图后 JPEG 编码用（pyautogui 截屏本身也要它）
 
-try:
-    from PIL import Image as _PIL_Image   # 截图后 JPEG 编码用（pyautogui 截屏本身也要它）
-    _PIL_IMPORT_ERR = None
-except Exception as _e:  # noqa: E722
-    _PIL_Image = None
-    _PIL_IMPORT_ERR = _e
-
-SUB_QUEUE = '_sub/desktop'   # 收/出：屏幕截图 + 完成回执入队（下游消费）
-PUB_QUEUE = '_pub/desktop'   # 发/入：电脑控制指令（本 worker 消费执行）
-
-DEFAULT_HOLD_S = 0.05        # keyboard 缺省 time：按压多久（秒）
-JPEG_QUALITY = 85            # 截图 JPEG 质量（0-100）
+from ..config import (DESKTOP_HOLD_S, DESKTOP_JPEG_QUALITY,
+                      QUEUE_DESKTOP_PUB, QUEUE_DESKTOP_SUB)
 
 # 特殊键：大写规范名 -> pyautogui 键名（箭头/修饰键/编辑键等）。
 # 切分按键串时对这些名字做最长匹配 —— "CTRLALTDELETE" 才能正确切成
@@ -159,11 +143,6 @@ class DesktopWorker:
     gui 可注入替身（默认 pyautogui 模块），测试时记录调用而不真动鼠标键盘。
     """
 
-    # 类属性别名：main_loop.py 里是按 `DesktopWorker.SUB_QUEUE` 取队列名的，
-    # 而队列名本身是上面的模块级常量（模块级那份照旧，外部直接 import 用）。
-    SUB_QUEUE = SUB_QUEUE
-    PUB_QUEUE = PUB_QUEUE
-
     def __init__(self, queues: dict[str, Queue], stop_token=None, gui=None):
         self.queues = queues
         self.stop_token = stop_token
@@ -171,12 +150,8 @@ class DesktopWorker:
 
     # ------------------------------------------------------------ 指令执行
     def run(self):
-        if self.gui is None:
-            print('[Desktop] pyautogui 不可用，桌面 worker 不启动'
-                  '（pip install pyautogui；原因为 %s）'
-                  % _GUI_IMPORT_ERR, flush=True)
-            return
-        missing = [k for k in (SUB_QUEUE, PUB_QUEUE) if k not in self.queues]
+        missing = [k for k in (QUEUE_DESKTOP_SUB, QUEUE_DESKTOP_PUB)
+                   if k not in self.queues]
         if missing:
             print('[Desktop] 缺少内部队列 %s：请在 main_loop.py 里创建'
                   % missing, flush=True)
@@ -188,10 +163,11 @@ class DesktopWorker:
         except Exception:
             pass
         print('[Desktop] DesktopWorker 已启动'
-              '（指令←消费 %s，结果/截图→入队 %s）' % (PUB_QUEUE, SUB_QUEUE),
+              '（指令←消费 %s，结果/截图→入队 %s）'
+              % (QUEUE_DESKTOP_PUB, QUEUE_DESKTOP_SUB),
               flush=True)
         while True:
-            item = self.queues[PUB_QUEUE].get()   # 阻塞等指令
+            item = self.queues[QUEUE_DESKTOP_PUB].get()   # 阻塞等指令
             if self.stop_token is not None and item is self.stop_token:
                 break
             if not isinstance(item, dict):
@@ -223,9 +199,9 @@ class DesktopWorker:
         value = str(cmd.get('value') or '').strip()
         t = cmd.get('time')
         try:
-            hold = float(t) if t is not None else DEFAULT_HOLD_S
+            hold = float(t) if t is not None else DESKTOP_HOLD_S
         except (TypeError, ValueError):
-            hold = DEFAULT_HOLD_S
+            hold = DESKTOP_HOLD_S
         if hold < 0:
             hold = 0.0
         tokens = split_keys(value)
@@ -291,14 +267,9 @@ class DesktopWorker:
 
     # ------------------------------------------------------------ 截屏
     def _do_screenshot(self):
-        if _PIL_Image is None:
-            print('[Desktop] Pillow 不可用，无法截屏'
-                  '（pip install pillow；原因为 %s）' % _PIL_IMPORT_ERR,
-                  flush=True)
-            return False
         im = self.gui.screenshot()           # pyautogui -> PIL Image
         buf = io.BytesIO()
-        im.save(buf, 'JPEG', quality=JPEG_QUALITY)
+        im.save(buf, 'JPEG', quality=DESKTOP_JPEG_QUALITY)
         jpg = buf.getvalue()
         meta = {
             'type': 'screen',
@@ -309,15 +280,15 @@ class DesktopWorker:
             'fmt': 'jpeg',
             'data': base64.b64encode(jpg).decode('ascii'),
         }
-        self.queues[SUB_QUEUE].put(meta)
+        self.queues[QUEUE_DESKTOP_SUB].put(meta)
         print('[Desktop] 截图已入队 %s: %dx%d %dB (JPEG q=%d)'
-              % (SUB_QUEUE, meta['width'], meta['height'],
-                 len(jpg), JPEG_QUALITY), flush=True)
+              % (QUEUE_DESKTOP_SUB, meta['width'], meta['height'],
+                 len(jpg), DESKTOP_JPEG_QUALITY), flush=True)
         return True
 
     # ------------------------------------------------------------ 完成回执
     def _report_done(self, cmd):
-        """指令执行成功后，把完成回执放进 SUB_QUEUE（与截图同队列、按序）。
+        """指令执行成功后，把完成回执放进 _sub/desktop（与截图同队列、按序）。
 
         载荷 = {'type': 'done', 'time': <unix 秒>, 'command': <原始指令 dict>}，
         说明刚完成的是哪条指令。只回"真做完"的：无效/失败路径在 run() 里
@@ -328,5 +299,6 @@ class DesktopWorker:
             'time': int(time.time()),
             'command': cmd,
         }
-        self.queues[SUB_QUEUE].put(meta)
-        print('[Desktop] 指令完成已入队 %s: %s' % (SUB_QUEUE, cmd), flush=True)
+        self.queues[QUEUE_DESKTOP_SUB].put(meta)
+        print('[Desktop] 指令完成已入队 %s: %s' % (QUEUE_DESKTOP_SUB, cmd),
+              flush=True)

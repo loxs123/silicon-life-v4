@@ -54,7 +54,6 @@ pub/speak 主题的 ESP32 端。
     set DASHSCOPE_API_KEY=sk-xxx
 """
 
-import os
 import array
 import base64
 import threading
@@ -66,32 +65,12 @@ from dashscope.audio.qwen_tts_realtime import (
 )
 from queue import Queue
 
-# ---------- 配置 ----------
-# API Key 优先从环境变量读取;也可以直接写 dashscope.api_key = 'sk-xxx'
-dashscope.api_key = os.environ.get('DASHSCOPE_API_KEY', '')
+from ..config import (DASHSCOPE_API_KEY, EAR_START, EAR_STOP, QUEUE_EAR_CTRL,
+                      QUEUE_SPEAK_OUT, QUEUE_TTS, TTS_CONNECT_TIMEOUT, TTS_MODEL,
+                      TTS_SENTENCE_TIMEOUT, TTS_SPEED, TTS_VOICE, TTS_VOLUME_DIV,
+                      TTS_WS_URL)
 
-SPEAK_QUEUE = 'tts'         # 消费:内部流水线队列,里面是要说的文本
-OUTPUT_QUEUE = 'pub/speak'  # 产出:出站队列 → 专职发送线程 → MQTT pub/speak → ESP32 播放
-EAR_QUEUE = 'pub/ear'       # 出站队列:控制 ESP32 耳朵采集启停(回声抑制)
-EAR_STOP = b'stop'          # 出声前推送:耳朵停采,防 mic 收到自己的声音
-EAR_START = b'start'        # 本句播完/放弃后推送:耳朵恢复采集
-# WS_URL = 'wss://xxx.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime'  # 专属接入点示例
-WS_URL = 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime'
-
-MODEL = 'qwen3-tts-flash-realtime'
-VOICE = 'Chelsie'        # 音色
-TTS_SPEED = 1.2          # 语速倍率:范围 0.5~2.0(1.0 为正常语速)
-
-CONNECT_TIMEOUT = 6.0    # 建连(含后台预热)最长等待秒数
-SENTENCE_TIMEOUT = 30.0  # 单句合成超时秒数,防网络异常导致永久卡住
-
-# ---------- 下行音量(数字衰减,在这里做) ----------
-# int16 PCM 每样本右移 VOLUME_DIV 位,每移 1 位 = -6dB:
-#   div=1 原声(0dB) | div=2 = 1/4(-12dB) | div=3 = 1/8(-18dB) | div=4 = 1/16(-24dB)
-# ESP32 端只做裸播放,音量统一在这里压好再发 pub/speak。
-# MAX98357 GAIN 脚悬空时增益偏高,实测声音过大 → 默认 1/8 音量(-18dB);
-# 听感太大 → div 加 1,太小 → div 减 1。
-VOLUME_DIV = 4
+dashscope.api_key = DASHSCOPE_API_KEY
 
 
 def _attenuate(pcm: bytes, div: int) -> bytes:
@@ -132,9 +111,9 @@ class Callback(QwenTtsRealtimeCallback):
                 if self.first_audio_at is None:
                     self.first_audio_at = time.perf_counter()
                 pcm = _attenuate(base64.b64decode(response['delta']),
-                                 VOLUME_DIV)
+                                 TTS_VOLUME_DIV)
                 # 放进 pub/speak 出站队列,专职发送线程会发布给 ESP32
-                self.worker.queues[OUTPUT_QUEUE].put(pcm)
+                self.worker.queues[QUEUE_SPEAK_OUT].put(pcm)
                 self.sent_bytes += len(pcm)
             elif type_ == 'session.finished':
                 self.complete_event.set()
@@ -170,7 +149,7 @@ class SpeakWorker:
     # ------------------------------------------------------- 主循环
     def run(self):
         # 自检:队列必须存在,否则没有任何东西会真的发到 MQTT
-        missing = [k for k in (SPEAK_QUEUE, OUTPUT_QUEUE, EAR_QUEUE)
+        missing = [k for k in (QUEUE_TTS, QUEUE_SPEAK_OUT, QUEUE_EAR_CTRL)
                    if k not in self.queues]
         if missing:
             print('[TTS] 缺少队列 %s:请检查 config.py 的 SUB/PUB_TOPICS'
@@ -178,12 +157,12 @@ class SpeakWorker:
             return
         if not dashscope.api_key:
             print('[TTS] 警告: 未设置 DASHSCOPE_API_KEY,合成将失败', flush=True)
-        print('[TTS] SpeakWorker 已启动,等待 %s 队列文本...' % SPEAK_QUEUE,
+        print('[TTS] SpeakWorker 已启动,等待 %s 队列文本...' % QUEUE_TTS,
               flush=True)
         self._start_warm()   # 先预热第一句的连接
         try:
             while True:
-                item = self.queues[SPEAK_QUEUE].get()
+                item = self.queues[QUEUE_TTS].get()
                 if self.stop_token is not None and item is self.stop_token:
                     break
                 text = item
@@ -215,14 +194,14 @@ class SpeakWorker:
         """新建一条会话并等它 on_open。调用方须已持锁。"""
         self._drop_locked()
         cb = Callback(self)
-        tts = QwenTtsRealtime(model=MODEL, callback=cb, url=WS_URL)
+        tts = QwenTtsRealtime(model=TTS_MODEL, callback=cb, url=TTS_WS_URL)
         try:
             tts.connect()
-            tts.update_session(voice=VOICE,
+            tts.update_session(voice=TTS_VOICE,
                                response_format=AudioFormat.PCM_24000HZ_MONO_16BIT,
                                mode='server_commit',
                                speech_rate=TTS_SPEED)
-            if not cb.open_event.wait(timeout=CONNECT_TIMEOUT):
+            if not cb.open_event.wait(timeout=TTS_CONNECT_TIMEOUT):
                 raise RuntimeError('等待 on_open 超时')
         except Exception:
             try:
@@ -268,7 +247,7 @@ class SpeakWorker:
             return self._cb
         if self._warming:
             # 预热线程正在建连:等它(不持锁,否则预热线程拿不到锁)
-            self._ready.wait(timeout=CONNECT_TIMEOUT)
+            self._ready.wait(timeout=TTS_CONNECT_TIMEOUT)
         with self._lock:
             if not self._usable():
                 self._open_locked()      # 预热没赶上/失败:现场建连兜底
@@ -295,7 +274,7 @@ class SpeakWorker:
 
         # 2) 出声前让耳朵停采(防回音);整句处理完(成功/失败/重连)再恢复。
         #    try/finally 保证任何路径都发 start,耳朵不会永久静音。
-        self.queues[EAR_QUEUE].put(EAR_STOP)
+        self.queues[QUEUE_EAR_CTRL].put(EAR_STOP)
         try:
             ok = self._send_wait(cb, text)
             if not ok:
@@ -308,7 +287,7 @@ class SpeakWorker:
                     print('[TTS] 重连失败,本句放弃: %s' % e, flush=True)
                     ok = False
         finally:
-            self.queues[EAR_QUEUE].put(EAR_START)
+            self.queues[QUEUE_EAR_CTRL].put(EAR_START)
 
         # 3) 计时 + 为下一句预热(回到等文本之前先点火,后台慢慢建)
         if cb is not None and cb.open_at is not None:
@@ -338,8 +317,8 @@ class SpeakWorker:
             if cb.closed_event.is_set():
                 print('[TTS] 合成中连接断开', flush=True)
                 return False
-            if waited >= SENTENCE_TIMEOUT:
-                print('[TTS] 合成超时(%.0fs)' % SENTENCE_TIMEOUT, flush=True)
+            if waited >= TTS_SENTENCE_TIMEOUT:
+                print('[TTS] 合成超时(%.0fs)' % TTS_SENTENCE_TIMEOUT, flush=True)
                 return False
             cb.complete_event.wait(timeout=0.2)
             waited += 0.2

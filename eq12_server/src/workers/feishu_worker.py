@@ -47,13 +47,11 @@ from __future__ import annotations
 import base64
 import io
 import json
-import os
 import threading
 from queue import Queue
 
-SUB_QUEUE = '_sub/feishu'   # 收：收到消息入队（下游 brain/桥接 消费）
-PUB_QUEUE = '_pub/feishu'   # 发：出站消息队列（本 worker 消费并发送）
-FEISHU_PREFIX = '[FEISHU]:'  # 出站文字消息前缀（与 v3 一致）
+from ..config import (FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_PREFIX,
+                      QUEUE_FEISHU_PUB, QUEUE_FEISHU_SUB)
 
 # lark-oapi 官方 SDK：装不上/版本差异都不应拖垮 eq12_server。
 # 这 SDK 是个生成式巨无霸（本机 10727 个子模块），import 一次约 10 秒 —— 所以
@@ -136,20 +134,14 @@ class FeishuWorker:
     向它们投哨兵 —— 与消费内部 asr/tts 队列的 worker 一样随进程退出（daemon）。
     """
 
-    # 类属性别名：main_loop.py 里是按 `FeishuWorker.SUB_QUEUE` 取队列名的，
-    # 而队列名本身是上面的模块级常量（模块级那份照旧，外部直接 import 用）。
-    SUB_QUEUE = SUB_QUEUE
-    PUB_QUEUE = PUB_QUEUE
-
     def __init__(self, queues: dict[str, Queue], stop_token=None,
                  app_id=None, app_secret=None):
         self.queues = queues
         self.stop_token = stop_token
-        # 凭据优先取环境变量（set_dashscope_env.cmd 持久化），可注入覆盖（测试用）
-        self.app_id = (app_id if app_id is not None
-                       else os.environ.get('FEISHU_APP_ID', ''))
+        # 凭据来自 config（读环境变量，见 set_dashscope_env.cmd），可注入覆盖（测试用）
+        self.app_id = app_id if app_id is not None else FEISHU_APP_ID
         self.app_secret = (app_secret if app_secret is not None
-                           else os.environ.get('FEISHU_APP_SECRET', ''))
+                           else FEISHU_APP_SECRET)
         self._chat_id = ''     # 最近一次收到消息的会话（发图兜底目标，同 v3）
         self._api = None       # lark HTTP client（发消息用，惰性创建）
         self._ws = None        # lark 长连接对象（收事件用）
@@ -202,7 +194,7 @@ class FeishuWorker:
                 return
             print('[Feishu] 收到文字(%s): %s' % (sender_name or '?',
                                                text[:80]), flush=True)
-            self.queues[SUB_QUEUE].put({
+            self.queues[QUEUE_FEISHU_SUB].put({
                 'feishu': True,
                 'text': text,
                 'message_id': message_id,
@@ -215,7 +207,7 @@ class FeishuWorker:
                 return
             print('[Feishu] 收到图片(%s): key=%s' % (sender_name or '?',
                                                     image_key), flush=True)
-            self.queues[SUB_QUEUE].put({
+            self.queues[QUEUE_FEISHU_SUB].put({
                 'feishu': True,
                 'type': 'image',
                 'image_key': image_key,
@@ -356,7 +348,8 @@ class FeishuWorker:
     # ============================ 主循环 / 生命周期 ========================
     def run(self):
         """自检 → 启动长连接线程（收）→ 阻塞消费 _pub/feishu（发）。"""
-        missing = [k for k in (SUB_QUEUE, PUB_QUEUE) if k not in self.queues]
+        missing = [k for k in (QUEUE_FEISHU_SUB, QUEUE_FEISHU_PUB)
+                   if k not in self.queues]
         if missing:
             print('[Feishu] 缺少内部队列 %s：请在 main_loop.py 里创建'
                   % missing, flush=True)
@@ -373,7 +366,8 @@ class FeishuWorker:
                   % _LARK_IMPORT_ERR, flush=True)
             return
         print('[Feishu] FeishuWorker 已启动'
-              '（收→入队 %s，发←消费 %s）' % (SUB_QUEUE, PUB_QUEUE), flush=True)
+              '（收→入队 %s，发←消费 %s）' % (QUEUE_FEISHU_SUB, QUEUE_FEISHU_PUB),
+              flush=True)
         try:
             self._api_client()          # 提前暴露建 client 的配置错误
         except Exception as e:
@@ -383,7 +377,7 @@ class FeishuWorker:
         self._start_receiver()
         try:
             while not self._closing:
-                item = self.queues[PUB_QUEUE].get()   # 阻塞等出站消息
+                item = self.queues[QUEUE_FEISHU_PUB].get()   # 阻塞等出站消息
                 if self.stop_token is not None and item is self.stop_token:
                     break
                 try:

@@ -100,7 +100,9 @@ cd eq12_server && python -m src.core.hook_examples.demo
 
 ## 几条约定
 
-- 私有常量放自己文件顶部（同 `ear_worker.py` 的 `SAMPLE_RATE` 风格）；跨 hook 共用的才上 `src/config.py`
+- hook 自己的私有常量放文件顶部；**worker 的参数一律放 `src/config.py`**
+  （模型名、采样率、音色、超时、音量、JPEG 质量、队列名…），worker 里只 import 不自己定义，
+  见 config.py 里按 `耳朵 / ASR`、`嘴 / TTS`、`飞书`、`桌面` 分的段
 - 文件头 docstring 写清「读什么 / 写什么」
 - hook 里别 `sleep`、别自己开线程——会拖住 brain 主循环
 - 写完在 `hooks/__init__.py` 里按顺序注册，文件不会自动被发现
