@@ -2,7 +2,7 @@
 # 设计原则
 
 - 一切皆hook
-- 统一上下文
+- 模型可见 = 已落日志
 - one token prediction 做判别
 
 

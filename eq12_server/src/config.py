@@ -119,3 +119,10 @@ FEISHU_DEFAULT_CHAT_ID = ''
 # ======================= 桌面 =======================
 DESKTOP_HOLD_S = 0.05         # keyboard 指令缺省按压时长（秒）
 DESKTOP_JPEG_QUALITY = 85     # 截图 JPEG 质量（0-100）
+
+# ======================= 睡眠 / dream =======================
+# 白天跑 Pipeline，晚上跑 DreamPipeline —— 两者**时间上互斥，不并发**，
+# 所以不需要抢占 / 异步 / 预算守卫。判据和整晚循环见 core/dream.py。
+DREAM_NIGHT_START = 23        # 几点开始做梦（24 小时制）
+DREAM_NIGHT_END = 7           # 几点醒；START > END 表示跨午夜
+DREAM_POLL_S = 60.0           # 夜里两遍 dream 之间的间隔（秒）
