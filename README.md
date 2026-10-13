@@ -131,7 +131,7 @@ silicon-life-v4/
 | 通道 | 方向 | 载荷 | 说明 |
 |---|---|---|---|
 | `_sub/feishu` | 飞书长连接收到 → 入队 | 用户文字 / 图片消息 dict | 下游（大脑）消费，待接 |
-| `_pub/feishu` | 上游入队 → worker 发出 | 回复文字 / 主动发图 dict | 大脑写入，待接 |
+| `_pub/feishu` | 上游入队 → worker 发出 | 发文字 `{'text':…}` / 发图 `{'img':…}` dict | 大脑写入，待接 |
 | `_pub/desktop` | 上游入队 → worker 执行 | `{"type":"keyboard"…}` / `"mouse"` / `"scroll"` / `"screenshot"` | 大脑写入，待接 |
 | `_sub/desktop` | worker 执行完 → 入队 | 截图 `{'type':'screen',...}` + 完成回执 `{'type':'done','time':…,'command':<原始指令>}` | 下游（大脑）消费，待接 |
 

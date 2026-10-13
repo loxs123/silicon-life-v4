@@ -23,9 +23,12 @@ eq12_server 进程内直连飞书 OpenAPI（WebSocket 长连接收事件、HTTPS
                 （图片本体要等视觉识别时才按 image_key 下载，骨架阶段只记录）
 
     上游 -> feishu（_pub/feishu 队列里的消息）：
-        str  "[FEISHU]:<message_id>|<文字>"    → 在该消息下回复文字
-        dict {'img': <base64 JPEG>, 'chat_id': <str>}   → 给会话主动发图
-              （如 <cam> 拍照结果回传；chat_id 缺省时发给最近会话）
+        dict {'text': <str>, 'chat_id': <str>}          → 给会话发一条文字
+        dict {'img': <base64 JPEG>, 'chat_id': <str>}   → 给会话发一张图
+              （如 <cam> 拍照结果回传）
+        两种都是**主动发新消息**（im.v1.message.create），不引用任何历史消息。
+        chat_id 通常不用传：省略时用「最近一次收到消息的会话」，再退到
+        config.FEISHU_DEFAULT_CHAT_ID（重启后还没人说话时的兜底）。
 
 依赖：
     pip install lark-oapi        # 官方 SDK（长连接事件 + 消息/图片 API）
@@ -50,7 +53,7 @@ import json
 import threading
 from queue import Queue
 
-from ..config import (FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_PREFIX,
+from ..config import (FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_DEFAULT_CHAT_ID,
                       QUEUE_FEISHU_PUB, QUEUE_FEISHU_SUB)
 
 # lark-oapi 官方 SDK：装不上/版本差异都不应拖垮 eq12_server。
@@ -61,7 +64,6 @@ _lark = None
 _LARK_IMPORT_ERR = None
 CreateImageRequest = CreateImageRequestBody = None
 CreateMessageRequest = CreateMessageRequestBody = None
-ReplyMessageRequest = ReplyMessageRequestBody = None
 
 
 def _load_lark():
@@ -69,7 +71,6 @@ def _load_lark():
     global _lark, _LARK_IMPORT_ERR
     global CreateImageRequest, CreateImageRequestBody
     global CreateMessageRequest, CreateMessageRequestBody
-    global ReplyMessageRequest, ReplyMessageRequestBody
     if _lark is not None or _LARK_IMPORT_ERR is not None:
         return _lark is not None
     try:
@@ -77,7 +78,6 @@ def _load_lark():
         from lark_oapi.api.im.v1 import (
             CreateImageRequest, CreateImageRequestBody,
             CreateMessageRequest, CreateMessageRequestBody,
-            ReplyMessageRequest, ReplyMessageRequestBody,
         )
         _lark = lark_oapi
     except Exception as e:  # noqa: E722  ImportError 或 SDK 版本缺符号都算
@@ -135,14 +135,17 @@ class FeishuWorker:
     """
 
     def __init__(self, queues: dict[str, Queue], stop_token=None,
-                 app_id=None, app_secret=None):
+                 app_id=None, app_secret=None, default_chat_id=None):
         self.queues = queues
         self.stop_token = stop_token
         # 凭据来自 config（读环境变量，见 set_dashscope_env.cmd），可注入覆盖（测试用）
         self.app_id = app_id if app_id is not None else FEISHU_APP_ID
         self.app_secret = (app_secret if app_secret is not None
                            else FEISHU_APP_SECRET)
-        self._chat_id = ''     # 最近一次收到消息的会话（发图兜底目标，同 v3）
+        # 出站会话解析顺序：载荷里的 chat_id → 最近入站会话 → config 兜底
+        self._default_chat_id = (default_chat_id if default_chat_id is not None
+                                 else FEISHU_DEFAULT_CHAT_ID)
+        self._chat_id = ''     # 最近一次收到消息的会话（出站兜底目标，同 v3）
         self._api = None       # lark HTTP client（发消息用，惰性创建）
         self._ws = None        # lark 长连接对象（收事件用）
         self._closing = False
@@ -220,32 +223,39 @@ class FeishuWorker:
 
     # ============================ 发（消费 _pub/feishu 并调用 API） =========
     def _send_out(self, msg):
-        """处理一条出站消息（文字回复 / 主动发图）。异常由 run() 兜底打印。"""
-        if isinstance(msg, str) and msg.startswith(FEISHU_PREFIX):
-            rest = msg[len(FEISHU_PREFIX):]
-            mid, _, text = rest.partition('|')
-            mid = mid.strip()
-            text = text.strip()
-            if mid and text:
-                print('[Feishu] 回复文字: %s' % text[:80], flush=True)
-                self._reply_text(mid, text)
+        """处理一条出站消息（文字 / 图片）。异常由 run() 兜底打印。
+
+        两种载荷都走 im.v1.message.create —— 主动发新消息，不引用任何历史消息。
+        目标会话的解析顺序：载荷里的 chat_id → 最近一次收到消息的会话
+        → config.FEISHU_DEFAULT_CHAT_ID（重启后还没人说话时的兜底）。
+        """
+        if not isinstance(msg, dict):
+            print('[Feishu] 忽略未知出站消息: %r' % (msg,), flush=True)
             return
-        if isinstance(msg, dict):
-            img_b64 = msg.get('img') or ''
-            if img_b64:
-                chat_id = str(msg.get('chat_id') or '').strip() or self._chat_id
-                if not chat_id:
-                    print('[Feishu] 发图失败: 无 chat_id 且无最近会话', flush=True)
-                    return
-                jpg = base64.b64decode(img_b64)
-                print('[Feishu] 发图片到会话(%s): %dB' % (chat_id, len(jpg)),
-                      flush=True)
-                self._send_image_to_chat(chat_id, jpg)
-            else:
-                print('[Feishu] 忽略未知出站 dict: %s'
-                      % str(msg)[:120], flush=True)
+
+        text = str(msg.get('text') or '').strip()
+        img_b64 = msg.get('img') or ''
+        if not text and not img_b64:
+            print('[Feishu] 忽略未知出站 dict: %s' % str(msg)[:120], flush=True)
             return
-        print('[Feishu] 忽略未知出站消息: %r' % (msg,), flush=True)
+
+        chat_id = (str(msg.get('chat_id') or '').strip()
+                   or self._chat_id
+                   or str(self._default_chat_id or '').strip())
+        if not chat_id:
+            print('[Feishu] 发送失败: 无 chat_id、无最近会话、'
+                  'config.FEISHU_DEFAULT_CHAT_ID 也为空', flush=True)
+            return
+
+        if text:
+            print('[Feishu] 发文字到会话(%s): %s' % (chat_id, text[:80]),
+                  flush=True)
+            self._send_text_to_chat(chat_id, text)
+            return
+
+        jpg = base64.b64decode(img_b64)
+        print('[Feishu] 发图片到会话(%s): %dB' % (chat_id, len(jpg)), flush=True)
+        self._send_image_to_chat(chat_id, jpg)
 
     # ------------------------- lark HTTP 发送原语 --------------------------
     def _api_client(self):
@@ -268,19 +278,20 @@ class FeishuWorker:
             self._api = b.build()
         return self._api
 
-    def _reply_text(self, message_id, text):
-        """在该消息下回复文字（回复消息接口，SDK: im.v1.message.reply）"""
-        req = (ReplyMessageRequest.builder()
-               .message_id(message_id)
-               .request_body(ReplyMessageRequestBody.builder()
+    def _send_text_to_chat(self, chat_id, text):
+        """主动给会话发一条文字（SDK: im.v1.message.create，不引用任何消息）"""
+        req = (CreateMessageRequest.builder()
+               .receive_id_type('chat_id')
+               .request_body(CreateMessageRequestBody.builder()
+                             .receive_id(chat_id)
                              .msg_type('text')
                              .content(json.dumps({'text': text},
                                                  ensure_ascii=False))
                              .build())
                .build())
-        resp = self._api_client().im.v1.message.reply(req)
+        resp = self._api_client().im.v1.message.create(req)
         if not _resp_ok(resp):
-            print('[Feishu] 回复失败: %s' % _resp_err(resp), flush=True)
+            print('[Feishu] 发文字失败: %s' % _resp_err(resp), flush=True)
 
     def _upload_image(self, jpeg_bytes):
         """上传图片（用途=message）→ 返回 image_key；失败返回空串。"""

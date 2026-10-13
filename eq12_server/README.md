@@ -176,9 +176,9 @@ MainLoop()
 | 队列 | 方向 | 内容 |
 |---|---|---|
 | `_sub/feishu` | **收**：长连接收到用户消息 → 打包 dict 入队 | 下游（大脑/桥接）从这里消费 |
-| `_pub/feishu` | **发**：大脑/上游把出口消息放进此队列 → 本 worker 消费并调用飞书 API 发出 | 文字回复 / 主动发图 |
+| `_pub/feishu` | **发**：大脑/上游把出口消息放进此队列 → 本 worker 消费并调用飞书 API 发出 | 发文字 / 发图 |
 
-载荷协议（沿用 v3 `actors/feishu.py` 的 mailbox 协议，决策统一在 brain）：
+载荷协议（决策统一在 brain）：
 
 ```python
 # _sub/feishu 里的 dict（收到用户消息）
@@ -187,11 +187,18 @@ MainLoop()
 {'feishu': True, 'type': 'image', 'image_key': 'img_v2_...',
  'message_id': 'om_...', 'chat_id': 'oc_...', 'sender': 'ou_...'}
 
-# 往 _pub/feishu 放这些，即触发发送
-'[FEISHU]:<message_id>|<回复文字>'          # 在该消息下回复文字
-{'img': '<base64 JPEG>', 'chat_id': 'oc_...'}   # 给会话主动发图（如 <cam> 拍照结果；
-                                          #   chat_id 缺省时发给最近会话）
+# 往 _pub/feishu 放这些，即触发发送（两种都是 dict）
+{'text': '你好'}                               # 发一条文字
+{'img': '<base64 JPEG>'}                       # 发一张图（如 <cam> 拍照结果）
+#   chat_id 通常不用传 → 自动回到「消息来的那个会话」；
+#   只有要发给别的会话时才显式指定
 ```
+
+目标会话的解析顺序：载荷的 `chat_id` → 最近一次收到消息的会话
+→ `config.FEISHU_DEFAULT_CHAT_ID`（重启后还没人说话时的兜底）。
+
+两种载荷都走 `im.v1.message.create`（**主动发新消息**，不引用任何历史消息），
+所以不需要 `message_id`。
 
 - **依赖/凭据**：`pip install lark-oapi`；`FEISHU_APP_ID` / `FEISHU_APP_SECRET`
   放在仓库根 `set_dashscope_env.cmd`（已被 gitignore）。lark-oapi 未安装或凭据
