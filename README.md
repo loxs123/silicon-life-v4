@@ -132,7 +132,7 @@ silicon-life-v4/
 |---|---|---|---|
 | `_sub/feishu` | 飞书长连接收到 → 入队 | 用户文字 / 图片消息 dict | 下游（大脑）消费，待接 |
 | `_pub/feishu` | 上游入队 → worker 发出 | 发文字 `{'text':…}` / 发图 `{'img':…}` dict | 大脑写入，待接 |
-| `_pub/desktop` | 上游入队 → worker 执行 | `{"type":"keyboard"…}` / `"mouse"` / `"scroll"` / `"screenshot"` | 大脑写入，待接 |
+| `_pub/desktop` | 上游入队 → worker 执行 | `{"type":"keyboard"…}` / `"mouse"` / `"scroll"` / `"screenshot"` / `"clipboard"` | 大脑写入，待接 |
 | `_sub/desktop` | worker 执行完 → 入队 | 截图 `{'type':'screen',...}` + 完成回执 `{'type':'done','time':…,'command':<原始指令>}` | 下游（大脑）消费，待接 |
 
 - 桌面的 done 与截图**同队列、按序**：如 `screenshot` 指令会先出一条截图、紧跟一条 done，下游用 `type` 区分；done 的 `command` 字段原样回传被执行的指令，方便与请求配对。

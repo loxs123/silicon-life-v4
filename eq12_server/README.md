@@ -220,7 +220,7 @@ EQ12「硅基生命」跑在桌面 Windows 主机上，这台电脑就是它可�
 | 队列 | 方向 | 内容 |
 |---|---|---|
 | `_sub/desktop` | **出**：本 worker 放结果入队（截图 + 指令完成回执） | 下游（视觉理解/大脑）从这里消费 |
-| `_pub/desktop` | **入**：上游把控制指令放进此队列 → 本 worker 消费并执行 | 键鼠 / 滚轮 / 截屏 |
+| `_pub/desktop` | **入**：上游把控制指令放进此队列 → 本 worker 消费并执行 | 键鼠 / 滚轮 / 截屏 / 剪切板 |
 
 `_pub/desktop` 指令格式：
 
@@ -231,6 +231,7 @@ EQ12「硅基生命」跑在桌面 Windows 主机上，这台电脑就是它可�
 {"type": "mouse",   "direction": "UP|DOWN|LEFT|RIGHT", "value": 12}   # 鼠标相对移动 value 像素
 {"type": "scroll",  "direction": "UP|DOWN", "value": 12}              # 滚轮滚动 value 格
 {"type": "screenshot"}                              # 截一张全屏 JPEG → 放进 _sub/desktop（按需截，仿 pub/eye b'photo'）
+{"type": "clipboard", "value": "要写进剪切板的文字"}   # 写剪切板（空串=清空）；配合 keyboard 的 CTRLV 即可粘贴
 ```
 
 `_sub/desktop` 截图载荷（字段对齐 esp32 的 `sub/eye` 照片 JSON，仅多 `fmt`）：
@@ -246,7 +247,7 @@ EQ12「硅基生命」跑在桌面 Windows 主机上，这台电脑就是它可�
 ```python
 {'type': 'done', 'time': <unix秒>, 'command': <原始指令 dict>}
 # keyboard 已按完抬起 / mouse 已移动 / scroll 已滚 /
-# screenshot 已把截图入队（紧随其后的 {'type':'screen'} 即结果）。
+# screenshot 已把截图入队（紧随其后的 {'type':'screen'} 即结果）/ clipboard 已写入剪切板。
 # 指令无效（缺参/方向错/无按键）或执行抛异常时只打日志、不回执。
 ```
 

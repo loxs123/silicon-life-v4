@@ -8,34 +8,34 @@ self.queues['tts'].put('你好呀')      # 写
 text = self.queues['asr'].get()       # 读
 ```
 
-**队列不做任何包装、不解析：put 什么，get 到什么。**
-
----
-
-## 三条规则
-
-1. **队列名优先用 `config.py` 的常量**（`QUEUE_TTS`、`QUEUE_LEG_PUB`…），别写字面量。
-   ⚠️ 但 `config.py` 里**没有** `sub/eye`、`pub/eye`、`pub/face` 的常量，
-   这三处现在只能用字面量——建议补上，否则表里会混着两种写法。
-2. ⚠️ **`pub/*` 与 `sub/*` 是 MQTT 主题队列**，`get()` 到的是 paho **消息对象**，
-   业务数据在 `msg.payload` 里，类型是 `bytes`。**内部队列（`asr`/`tts`/`_*`）没有这一层包装。**
-   这是最容易踩的坑。
-3. 载荷只有 **四种类型**：`str`、`bytes`、`dict`、`msg`。没有第五种。
-
----
-
 ## 一、读：`get()` 到什么
 
 | 队列名 | 常量 | 类型 | 内容 / 字段 |
 |---|---|---|---|
 | `asr` | `QUEUE_ASR` | `str` | 识别出的一句话，如 `'你好呀'`。空文本不入队 |
-| `tts` | `QUEUE_TTS` | `str` | *(不作为读入口，见写表)* |
 | `sub/leg` | `QUEUE_LEG_SUB` | `msg` | `msg.payload` = `bytes`，UTF-8 文本 `done:<规范化指令>` |
-| `sub/eye` | ⚠️ 无 | `msg` | `msg.payload` = `bytes`，UTF-8 JSON 照片，见下 |
+| `sub/eye` | - | `msg` | `msg.payload` = `bytes`，UTF-8 JSON 照片，见下 |
 | `sub/ear` | `QUEUE_EAR_IN` | `msg` | `msg.payload` = `bytes`，裸 PCM **16k/16bit/mono**，640B 一块 |
 | `_sub/feishu` | `QUEUE_FEISHU_SUB` | `dict` | 收到的飞书消息，见下 |
 | `_sub/desktop` | `QUEUE_DESKTOP_SUB` | `dict` | 桌面结果，见下 |
-| `sub/brain` `sub/mouth` `sub/face` | — | — | 占位，格式未定义 |
+
+### `sub/leg`
+
+```python
+'done:forward,50,2'    # 前进 50% 跑满 2 秒、电机已停
+'done:pan,90'          # 云台水平已到 90°
+'done:right,30,0.5'    # 原地右转 0.5 秒完毕
+'done:center'          # 复位完成（云台回中 + 电机停）
+```
+
+腿是**串行**的：投一条 `pub/leg` 之后，`sub/leg` 里来的下一条回执就是它做完了。
+
+⚠️ 三个坑：
+
+- `done:` 后面是**解析后的规范化值**——投 `forward,50,2秒`，回执是 `done:forward,50,2`。
+  **别按字符串全等比对**，要按解析后的参数比。
+- 失败 / 未知指令**不回执** → 等回执**务必设超时**，否则永久挂起。
+- 回执在**动作真正做完之后**才发（电机类要跑满时长自动停稳），不是收到指令就回。
 
 ### `sub/eye`
 
@@ -78,13 +78,19 @@ text = self.queues['asr'].get()       # 读
 |---|---|---|---|---|
 | 让嘴说话 | `tts` | `QUEUE_TTS` | `str` | `'你好呀'`（空串被跳过） |
 | 让腿动 | `pub/leg` | `QUEUE_LEG_PUB` | `str` | `'forward,50,2'` |
-| 让脸变表情 | `pub/face` | ⚠️ 无 | `str` | `'happy'` |
-| 拍一张照 | `pub/eye` | ⚠️ 无 | `bytes` | `b'photo'` |
+| 让脸变表情 | `pub/face` | - | `str` | `'happy'` |
+| 拍一张照 | `pub/eye` | - | `bytes` | `b'photo'` |
 | 耳朵停采 / 恢复 | `pub/ear` | `QUEUE_EAR_CTRL` | `bytes` | `b'stop'` / `b'start'` |
 | 发下行语音 | `pub/speak` | `QUEUE_SPEAK_OUT` | `bytes` | 裸 PCM **24k/16bit/mono** |
 | 让这台电脑动 | `_pub/desktop` | `QUEUE_DESKTOP_PUB` | `dict` | 见下 |
 | 发飞书 | `_pub/feishu` | `QUEUE_FEISHU_PUB` | `dict` | 见下 |
-| `pub/brain` `pub/mouth` | — | — | — | 占位，格式未定义 |
+| （占位） | `pub/brain` `pub/mouth` | — | — | 格式未定义 |
+
+### `tts`
+
+```python
+'你好呀'    # 一句要说的文本；空串被跳过
+```
 
 ### `pub/leg`
 
@@ -114,15 +120,35 @@ text = self.queues['asr'].get()       # 读
 
 都是 UTF-8 文本，大小写不敏感，可带旧前缀 `[SCR]:`；别名 `neutral` → `idle`。
 
+### `pub/eye`
+
+```python
+b'photo'    # 拍一张 → 照片异步从 sub/eye 上来
+```
+
+### `pub/ear`
+
+```python
+b'stop'     # 停采 + 清掉未播缓冲
+b'start'    # 恢复采集
+```
+
+回声抑制用。**平时由 SpeakWorker 自动管理**（出声前 stop、句毕 start），
+hook 一般不用碰——手动发会打断它的配对。
+
 ### `_pub/desktop`
 
 ```python
-{'type': 'keyboard', 'value': 'A'}                        # 按下再抬起，'time' 给保持秒数，缺省 0.05
+{'type': 'keyboard', 'value': 'A'}                         # 按下再抬起，'time' 给保持秒数，缺省 0.05
 {'type': 'keyboard', 'value': 'CTRLALTDELETE'}             # 组合键直接拼写
 {'type': 'mouse', 'direction': 'UP', 'value': 12}          # 相对移动，direction: UP/DOWN/LEFT/RIGHT
 {'type': 'scroll', 'direction': 'DOWN', 'value': 5}        # 滚轮，direction: UP/DOWN
 {'type': 'screenshot'}                                     # → 结果进 _sub/desktop
+{'type': 'clipboard', 'value': '要写进剪切板的文字'}        # 写剪切板（空串 = 清空）
 ```
+
+剪切板配合键盘就能粘贴到别处：先 `clipboard` 写入，再
+`{'type':'keyboard','value':'CTRLV'}`。
 
 按键串按**最长匹配**切分（`LEFT` 是方向键，不是 L+E+F+T）；大小写靠显式 `SHIFT`
 （`SHIFTA` = 大写 A）。特殊键用大写规范名：`ENTER` `SPACE` `TAB` `ESC` `BACKSPACE`
@@ -141,21 +167,3 @@ text = self.queues['asr'].get()       # 读
 # 只有要发给「别的会话」时才需要显式指定
 {'text': '你好', 'chat_id': 'oc_别的会话'}
 ```
-
-两种都是 dict，都走 `im.v1.message.create`（**主动发新消息**，不引用任何历史消息），
-所以**不需要 `message_id`**。
-
-**`chat_id` 通常不用传**，解析顺序是：
-
-1. 载荷里的 `chat_id`
-2. 最近一次收到消息的会话 —— 从哪来的，回哪去
-3. `config.FEISHU_DEFAULT_CHAT_ID` —— 进程刚重启、还没人说话时的兜底
-
-三者都为空 → 打日志放弃发送。
-
-其它行为：
-
-- 既没有 `text` 也没有 `img` → 打日志忽略
-- 发送失败**只打日志、不回队列** → 上游无法知道送达与否
-
-## 

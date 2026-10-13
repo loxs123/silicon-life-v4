@@ -4,7 +4,7 @@ DesktopWorker —— 桌面操作 worker：让机器人操控它所在的这台 
 
 EQ12「硅基生命」跑在桌面 Windows 主机上：这台电脑就是它的"身体外的工具"。
 本 worker 用 pyautogui 在同一会话里模拟键盘 / 鼠标 / 滚轮，用 Pillow 截屏，
-让上游（brain）能"看屏幕 → 想 → 操作"。
+用 Win32 剪切板 API 写剪切板，让上游（brain）能"看屏幕 → 想 → 操作"。
 
 与飞书一样是**进程内 worker，不走 MQTT**，收发各一条内部队列（在 main_loop
 里与 asr/tts 同级创建，'_' 前缀 = 纯内部队列，不被 stop() 哨兵 / 专职发送
@@ -29,6 +29,10 @@ _pub/desktop 指令格式：
     {"type": "screenshot"}                                   # 无其它字段
         # 截一张全屏 JPEG → 放进 _sub/desktop（仿 ESP32 的 pub/eye b'photo'
         # → sub/eye 照片：按需截，不常开流）。
+    {"type": "clipboard", "value": "要写进剪切板的文字"}
+        # 把 value 写进 Windows 剪切板（空串 = 清空）。配合
+        #   {"type":"keyboard","value":"CTRLV"} 就能把这段文字粘到别处。
+        # value 必须是字符串；其它类型一律判无效。
 
 _sub/desktop 截图载荷（字段对齐 esp32 的 sub/eye 照片 JSON，只是多了 fmt）：
 
@@ -40,12 +44,14 @@ _sub/desktop 截图载荷（字段对齐 esp32 的 sub/eye 照片 JSON，只是�
 
     {'type': 'done', 'time': <unix 秒>, 'command': <原始指令 dict>}
         # 说明刚完成的指令：keyboard 已按完抬起 / mouse 已移动 / scroll 已滚 /
-        #   screenshot 已把截图入队（紧随其后的那条 {'type':'screen'} 即结果）。
+        #   screenshot 已把截图入队（紧随其后的那条 {'type':'screen'} 即结果）/
+        #   clipboard 已写入剪切板。
         # 只回"真做完"的：指令无效（缺参/方向错/无按键）或执行抛异常只打日志，
         #   不回执——下游如需配对/超时兜底，用 type 区分 screen / done。
 
 依赖：
     pip install pyautogui Pillow   # 键鼠/滚轮 + 截屏；硬依赖，缺了直接 import 报错
+    （剪切板用 ctypes 调 Win32 API，不加新依赖）
 
 说明：
     - 本 worker 执行的是 OS 级键鼠指令，等同真人在操作电脑；只消费 _pub/desktop
@@ -95,6 +101,96 @@ _FKEY_RE = re.compile(r'F(?:2[0-4]|1[0-9]|[1-9])')            # F1..F24(位数�
 
 _MOUSE_STEP = {'UP': (0, -1), 'DOWN': (0, 1),
                'LEFT': (-1, 0), 'RIGHT': (1, 0)}
+
+# ---------------------------------------------------------------- 剪切板
+# 用 Win32 API 写剪切板，不引入新依赖：
+#   - pyperclip 要多装一个包；
+#   - tkinter 有线程亲和性问题，而本 worker 跑在 worker 线程里。
+_CF_UNICODETEXT = 13
+_GMEM_MOVEABLE = 0x0002
+_CLIP_TRIES = 5          # OpenClipboard 会被别的进程短暂占用，重试几次
+_CLIP_RETRY_WAIT = 0.05  # 每次重试间隔（秒）
+
+try:
+    import ctypes
+    from ctypes import wintypes
+
+    _user32 = ctypes.WinDLL('user32', use_last_error=True)
+    _kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+
+    _user32.OpenClipboard.argtypes = [wintypes.HWND]
+    _user32.OpenClipboard.restype = wintypes.BOOL
+    _user32.EmptyClipboard.restype = wintypes.BOOL
+    _user32.CloseClipboard.restype = wintypes.BOOL
+    _user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    _user32.SetClipboardData.restype = wintypes.HANDLE
+    _kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    _kernel32.GlobalAlloc.restype = wintypes.HANDLE
+    _kernel32.GlobalLock.argtypes = [wintypes.HANDLE]
+    _kernel32.GlobalLock.restype = ctypes.c_void_p
+    _kernel32.GlobalUnlock.argtypes = [wintypes.HANDLE]
+    _kernel32.GlobalFree.argtypes = [wintypes.HANDLE]
+    _CLIPBOARD_OK = True
+except Exception:                     # 非 Windows / 加载失败：功能降级，不影响其余
+    _user32 = _kernel32 = None
+    _CLIPBOARD_OK = False
+
+
+def set_clipboard_text(text):
+    """把 text 写进 Windows 剪切板；成功 True，失败 False（不抛异常）。
+
+    调用方拿 False 时按"指令失败"处理 —— 与其它 desktop 指令一致：
+    失败只打日志、不回执。
+    """
+    if not _CLIPBOARD_OK:
+        print('[Desktop] 剪切板不可用（非 Windows 或 Win32 加载失败）', flush=True)
+        return False
+
+    for attempt in range(_CLIP_TRIES):
+        if _user32.OpenClipboard(None):
+            break
+        time.sleep(_CLIP_RETRY_WAIT)   # 被别的进程占用，等一下再试
+    else:
+        print('[Desktop] OpenClipboard 失败（剪切板被占用）', flush=True)
+        return False
+
+    handle = None
+    try:
+        if not _user32.EmptyClipboard():
+            print('[Desktop] EmptyClipboard 失败', flush=True)
+            return False
+
+        buf = ctypes.create_unicode_buffer(text)
+        size = ctypes.sizeof(buf)      # 含结尾 NUL，CF_UNICODETEXT 要的就是这个
+        handle = _kernel32.GlobalAlloc(_GMEM_MOVEABLE, size)
+        if not handle:
+            print('[Desktop] GlobalAlloc 失败', flush=True)
+            return False
+
+        ptr = _kernel32.GlobalLock(handle)
+        if not ptr:
+            print('[Desktop] GlobalLock 失败', flush=True)
+            _kernel32.GlobalFree(handle)
+            return False
+        try:
+            ctypes.memmove(ptr, buf, size)
+        finally:
+            _kernel32.GlobalUnlock(handle)
+
+        # ⚠️ SetClipboardData 成功后这块内存归系统所有，不能再 GlobalFree
+        if not _user32.SetClipboardData(_CF_UNICODETEXT, handle):
+            print('[Desktop] SetClipboardData 失败', flush=True)
+            _kernel32.GlobalFree(handle)
+            return False
+        handle = None                  # 移交成功，交出去
+        return True
+    except Exception as e:
+        print('[Desktop] 写剪切板异常[%s]: %s' % (type(e).__name__, e), flush=True)
+        if handle:
+            _kernel32.GlobalFree(handle)
+        return False
+    finally:
+        _user32.CloseClipboard()
 
 
 def split_keys(value):
@@ -184,6 +280,8 @@ class DesktopWorker:
                     ok = self._do_scroll(item)
                 elif mtype == 'screenshot':
                     ok = self._do_screenshot()
+                elif mtype == 'clipboard':
+                    ok = self._do_clipboard(item)
                 else:
                     print('[Desktop] 忽略未知指令类型: %r' % (mtype,),
                           flush=True)
@@ -284,6 +382,19 @@ class DesktopWorker:
         print('[Desktop] 截图已入队 %s: %dx%d %dB (JPEG q=%d)'
               % (QUEUE_DESKTOP_SUB, meta['width'], meta['height'],
                  len(jpg), DESKTOP_JPEG_QUALITY), flush=True)
+        return True
+
+    # ------------------------------------------------------------ 剪切板
+    def _do_clipboard(self, cmd):
+        """把 cmd['value'] 写进剪切板。空串合法（= 清空剪切板）。"""
+        text = cmd.get('value')
+        if not isinstance(text, str):
+            print('[Desktop] 剪切板指令缺 value（需字符串）: %s' % cmd, flush=True)
+            return False
+        if not set_clipboard_text(text):
+            return False
+        print('[Desktop] 剪切板已写入 %d 字: %s'
+              % (len(text), text[:60]), flush=True)
         return True
 
     # ------------------------------------------------------------ 完成回执
