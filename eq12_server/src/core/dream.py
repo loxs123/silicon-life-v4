@@ -15,14 +15,13 @@ class DreamPipeline:
         """
         self.queues = queues
         self.hooks = HOOKS
-        # 整晚有效（对比 Pipeline.user_info 是每轮重置）
-        self.state = {}
 
     def run(self):
         """睡一整晚：整条链反复跑，天亮就醒（返回）。
 
         白天 brain_worker 不会调这里 —— 互斥由调用方的 if/else 保证。
         """
+        self.user_info = {}
         while is_night():
             for hook in self.hooks:
                 hook(self) # 内部控制不能超过黑夜
