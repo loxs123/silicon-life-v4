@@ -8,6 +8,21 @@
 桌面上一个小生命：**ESP32 当身体，一台小主机当大脑**，两者用局域网 MQTT 说话。
 它听、看、说、动，也记得自己昨天是谁 —— 并且每天都会变成一个和昨天略有不同的自己。
 
+## 为什么要做它
+
+决定 AI 效果的有两样东西：**模型自身的能力**，和**上下文的能力**（Context Capability）——
+它是否拥有足够的信息、历史经验与业务知识，以及能不能在恰当的时机把它们调用起来。
+模型能力在飞快变强，而真正稀缺、也真正决定长期表现的往往是后者：一个在别的项目里踩过的坑，
+可能既不在当前仓库、也不在技术文档里，但正是那段经历让人这次会多想一步。
+
+而今天大多数 Agent 仍然是被动的：接收任务、取上下文、执行、结束，经历并不留下。所以我们想造的
+不是"更长的上下文窗口"，也不是"多一个长期记忆模块"，而是一个**24 小时在跑、主动感知、持续经历，
+并把经历沉淀成自己的 Context 的生命**：
+
+> 持续经历世界 → 积累 Context → 形成经验与直觉 → 做出更好的决策 → 获得新的经历。
+
+完整论述见 [`docs/why_silicon_life.md`](docs/why_silicon_life.md)。
+
 ---
 
 ## 1. 它是什么（想法，先于代码）
@@ -76,6 +91,8 @@ ESP32 喇叭随即回话。
 
 ```text
 silicon-life-v4/
+├── docs/                   # 为什么做硅基生命（Context Capability > Model Capability）
+│   └── why_silicon_life.md #   本文开头的动机，全文在这里
 ├── eq12_server/            # 大脑（Python ≥ 3.10）：MQTT 总线 + 器官 worker + 工具口
 │   ├── README.md           #   框架 / 新增 worker / 停机协议 / 三个工具口
 │   ├── tests/              #   python tests/test_delay_worker.py（免依赖、不联网）
@@ -105,6 +122,7 @@ cd eq12_server && python run.py                # 大脑
 
 | 想了解什么 | 去哪 |
 |---|---|
+| **为什么要做它**（Model Capability vs Context Capability，全文论述） | `docs/why_silicon_life.md` |
 | **它是怎么想的**（设计原则、消息、目标树与三个元功能） | `eq12_server/src/core/readme.md` |
 | **每天一份自己**（日志格式、日切、快照目录） | `eq12_server/src/core/log.md` |
 | hook 怎么写（`self` 上有什么、写队列必须打日志） | `eq12_server/src/core/architecture.md` |
