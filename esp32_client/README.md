@@ -167,6 +167,24 @@ neutral   # 别名 = idle
 - **音量衰减在 EQ12 端做**（`eq12_server/src/workers/speak_worker.py` 的 `VOLUME_DIV`），本端只裸播。
 - 回声抑制细节：收到 `b'stop'` 时停采并**清空 `pub/speak` 未播缓冲**（对应 eq12 speak_worker 注释建议）。
 
+### 手动验证（只用 mosquitto，不开 EQ12 也能测器官）
+
+```bash
+# 腿：连发两条动作 → 订阅 sub/leg 收"每条真做完"的回执
+mosquitto_pub -h 192.168.0.108 -t pub/leg -m "forward,50,2"
+mosquitto_pub -h 192.168.0.108 -t pub/leg -m "pan,90"
+mosquitto_sub -h 192.168.0.108 -t sub/leg
+#   → done:forward,50,2
+#   → done:pan,90
+
+# 眼：拍一张 → 订阅 sub/eye 收照片 JSON
+mosquitto_pub -h 192.168.0.108 -t pub/eye -m photo
+mosquitto_sub -h 192.168.0.108 -t sub/eye
+
+# 脸：切表情
+mosquitto_pub -h 192.168.0.108 -t pub/face -m happy
+```
+
 ## 6. 常见问题速查
 
 | 现象 | 原因 / 解决 |
