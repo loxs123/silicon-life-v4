@@ -30,6 +30,9 @@
 │    FeishuWorker   飞书长连接收发文字/图片    _sub/feishu(收) ⇄ _pub/feishu(发)      │
 │    DesktopWorker  键鼠/滚轮/截屏(操作本机)    _pub/desktop(指令入) → 执行 →         │
 │                                              _sub/desktop(截图 + done 完成回执出)   │
+│    DelayWorker    延迟消息："15 分钟后提醒我"  _pub/delay(投递) → 守时钟 →           │
+│                                              到点推一条"多久之前你让我做什么"到       │
+│                                              _sub/delay（不碰别的任何队列）          │
 └─────────────────────────────────────────────────────────────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
 │  MainLoop：每主题一条协程队列 + 每 pub 主题一条发送任务 + worker（与 eq12 同构，线程→协程）  │
@@ -59,18 +62,25 @@ silicon-life-v4/
 │   ├── run.py                 #   入口：MainLoop().run()
 │   ├── requirements.txt       #   依赖：paho-mqtt / dashscope / lark-oapi / pyautogui+Pillow
 │   │                           #   （按能力可选，缺哪个对应 worker 自动跳过）
-│   ├── README.md              #   框架设计 / 新增 worker / 停机协议 / 飞书与桌面工具口
+│   ├── README.md              #   框架设计 / 新增 worker / 停机协议 / 飞书·桌面·延迟消息
+│   ├── tests/                 #   冒烟：python tests/test_delay_worker.py（免依赖、不联网）
 │   └── src/
 │       ├── config.py          #   broker 地址 + SUB_TOPICS / PUB_TOPICS（name + qos）
 │       ├── main_loop.py       #   主循环：每主题队列 + 专职发送线程 + worker 编排 + 优雅停机
-│       ├── core/readme.md     #   （规划）agentic brain 实现占位说明
+│       ├── core/readme.md     #   设计原则 / 消息（延迟消息已实现）/ 待做的三个元功能
+│       ├── core/architecture.md#   hook 编写指南（self 上有什么、日志纪律）
+│       ├── core/queues.md     #   队列接口：读什么、写什么、载荷长什么样
+│       ├── core/log.md        #   （规划）日志与每日快照：hooks/logs（每天一文件）、
+│       │                       #   hooks/memory + hooks/skills（每天一文件夹）+ 日切
 │       └── workers/
 │           ├── ear_worker.py       # 耳：sub/ear(16k PCM) → DashScope 流式 ASR → asr 队列
 │           ├── brain_worker.py     # 脑：asr 文本 → 大模型流式回复(成句即送) → tts 队列
 │           ├── speak_worker.py     # 嘴：tts → 流式 TTS(24k PCM) → pub/speak；pub/ear 回声抑制
 │           ├── feishu_worker.py    # 飞书口：长连接收发文字/图片（_sub/feishu ⇄ _pub/feishu）
-│           └── desktop_worker.py   # 桌面口：键鼠/滚轮/截屏（_pub/desktop 指令 →
-│                                   #   _sub/desktop 截图 + {'type':'done'} 完成回执）
+│           ├── desktop_worker.py   # 桌面口：键鼠/滚轮/截屏（_pub/desktop 指令 →
+│           │                       #   _sub/desktop 截图 + {'type':'done'} 完成回执）
+│           └── delay_worker.py     # 延迟消息口：_pub/delay 投 {'text':…, 'in': 秒} →
+│                                   #   到点把「15 分钟之前你让我…」推进 _sub/delay
 ├── esp32_client/               # ESP32 器官端（MicroPython ≥ 1.22，asyncio 协程框架）
 │   ├── boot.py                 #   开机联网（设备上那份是真实的，勿覆盖）
 │   ├── main.py                 #   入口：MainLoop().run()（放根目录 = 开机自启）
@@ -126,7 +136,7 @@ silicon-life-v4/
 
 ### 3.2 进程内通道（eq12 内部，不经 MQTT）
 
-飞书与桌面是 EQ12 **进程内直连外部世界**的口，各用两条 `'_'` 前缀内部队列（`stop()` 哨兵与专职发送线程都不碰它们）：
+飞书、桌面与延迟消息都是 EQ12 **进程内直连外部世界 / 直连时钟**的口，各用两条 `'_'` 前缀内部队列（`stop()` 哨兵与专职发送线程都不碰它们）：
 
 | 通道 | 方向 | 载荷 | 说明 |
 |---|---|---|---|
@@ -134,9 +144,12 @@ silicon-life-v4/
 | `_pub/feishu` | 上游入队 → worker 发出 | 发文字 `{'text':…}` / 发图 `{'img':…}` dict | 大脑写入，待接 |
 | `_pub/desktop` | 上游入队 → worker 执行 | `{"type":"keyboard"…}` / `"mouse"` / `"scroll"` / `"screenshot"` / `"clipboard"` | 大脑写入，待接 |
 | `_sub/desktop` | worker 执行完 → 入队 | 截图 `{'type':'screen',...}` + 完成回执 `{'type':'done','time':…,'command':<原始指令>}` | 下游（大脑）消费，待接 |
+| `_pub/delay` | 上游入队 → worker 记账 | `{'text': '提醒我喝水', 'in': 900}` | 上游写入，待接 |
+| `_sub/delay` | 到点 → 入队 | `{'text': '15 分钟之前你让我提醒我喝水，现在到点了…', 'in': 900, 'due_at': …, 'fired_at': …}` | 下游消费，待接 |
 
 - 桌面的 done 与截图**同队列、按序**：如 `screenshot` 指令会先出一条截图、紧跟一条 done，下游用 `type` 区分；done 的 `command` 字段原样回传被执行的指令，方便与请求配对。
 - **只回"真做完"的**：指令无效（缺参/方向错/无按键）或执行抛异常只打日志、不回执（腿同理：PCA9685 未就绪 / 未知指令 / 参数错误不发 `done:`）。
+- 延迟消息**不许在 hook 里 sleep**：投 `_pub/delay` 一条 `{'text': '提醒我喝水', 'in': 900}`（只写秒，「15 分钟」= 900）后立刻返回，DelayWorker 守时钟；到点把「15 分钟之前你让我提醒我喝水，现在到点了，你来接着办。」推进 `_sub/delay`。**它只碰这两条队列**，谁读 `_sub/delay` 谁决定下一步（说 / 做 / 转发），不牵扯 asr、tts 等任何别的链路。待办只在内存里，进程重启就没了。
 
 ⚠️ **完成回执目前只有「腿」和「桌面」有**；眼（照片本身就是结果）与脸是单向执行、暂无完成回执，需要时可按同样方式补。
 
@@ -210,8 +223,11 @@ mosquitto_pub -h 192.168.0.108 -t pub/face -m happy
 
 | 想看什么 | 去哪 |
 |---|---|
-| eq12 框架设计 / 新增 worker / 停机协议 / 飞书与桌面工具口 | `eq12_server/README.md` |
-| agentic brain 规划占位 | `eq12_server/src/core/readme.md` |
+| eq12 框架设计 / 新增 worker / 停机协议 / 飞书·桌面·延迟消息 | `eq12_server/README.md` |
+| 队列接口（大脑读写哪个队列、载荷长什么样） | `eq12_server/src/core/queues.md` |
+| 日志与每日快照（`hooks/logs` 每天一文件、`hooks/memory`+`hooks/skills` 每天一文件夹） | `eq12_server/src/core/log.md` |
+| hook 怎么写（`self` 上有什么、写队列要打日志） | `eq12_server/src/core/architecture.md` |
+| 设计原则 / 消息 / 待做的三个元功能 | `eq12_server/src/core/readme.md` |
 | ESP32 上传 / 烧录 / 接线 / 排障 / 协议细节 | `esp32_client/README.md` + `esp32_client/docs/` |
-| 具体消息协议的代码级说明 | 各 worker 文件头 docstring（如 `move.py`、`desktop_worker.py`） |
-| PC 冒烟与设备端测试 | `esp32_client/tests/`（见 `esp32_client/README.md` §7） |
+| 具体消息协议的代码级说明 | 各 worker 文件头 docstring（如 `move.py`、`desktop_worker.py`、`delay_worker.py`） |
+| PC 冒烟与设备端测试 | `eq12_server/tests/test_delay_worker.py`（延迟消息）、`esp32_client/tests/`（见 `esp32_client/README.md` §7） |

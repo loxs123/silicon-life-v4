@@ -18,11 +18,12 @@ import time
 
 import paho.mqtt.client as mqtt
 
-from .config import (BROKER, PORT, PUB_TOPICS, QUEUE_ASR, QUEUE_DESKTOP_PUB,
-                     QUEUE_DESKTOP_SUB, QUEUE_FEISHU_PUB, QUEUE_FEISHU_SUB,
-                     QUEUE_TTS, SUB_TOPICS, USE_MQTT)
+from .config import (BROKER, PORT, PUB_TOPICS, QUEUE_ASR, QUEUE_DELAY_PUB,
+                     QUEUE_DELAY_SUB, QUEUE_DESKTOP_PUB, QUEUE_DESKTOP_SUB,
+                     QUEUE_FEISHU_PUB, QUEUE_FEISHU_SUB, QUEUE_TTS,
+                     SUB_TOPICS, USE_MQTT)
 from .workers import (EarWorker, BrainWorker, SpeakWorker, FeishuWorker,
-                      DesktopWorker)
+                      DesktopWorker, DelayWorker)
 
 _STOP = object()   # 停机哨兵：stop() 投进 pub/*、sub/* 队列，消费者 get() 到即退出
 
@@ -51,6 +52,9 @@ class MainLoop:
         # 桌面操作内部队列（同一 Windows 会话里模拟键鼠/滚轮/截屏，不经 MQTT）
         self.queues[QUEUE_DESKTOP_SUB] = queue.Queue()  # 出：截图+完成回执入队
         self.queues[QUEUE_DESKTOP_PUB] = queue.Queue()  # 入：电脑控制指令
+        # 延迟消息内部队列（到点把"你之前让我做的事"推回大脑，不经 MQTT）
+        self.queues[QUEUE_DELAY_PUB] = queue.Queue()    # 入：{'text': …, 'in': 秒}
+        self.queues[QUEUE_DELAY_SUB] = queue.Queue()    # 出：到点的那条消息 {'text': …}
 
         self.qos = {t['name']: t['qos'] for t in SUB_TOPICS + PUB_TOPICS}
 
@@ -61,8 +65,9 @@ class MainLoop:
         speak = SpeakWorker(self.queues, stop_token=_STOP)
         feishu = FeishuWorker(self.queues, stop_token=_STOP)
         desktop = DesktopWorker(self.queues, stop_token=_STOP)
+        delay = DelayWorker(self.queues)      # 不吃哨兵：daemon 线程随进程退出
         self._worker_runs = [ear.run, brain.run, speak.run,
-                             feishu.run, desktop.run]
+                             feishu.run, desktop.run, delay.run]
 
         self._threads: list[threading.Thread] = []
         self._running = False

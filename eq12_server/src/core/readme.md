@@ -6,8 +6,14 @@
 - one token prediction 做判别
 
 
+# 日志
+- `hooks/logs/`：每天一个文件 `YYYY-MM-DD.log`，**一行一个操作**，只追加
+- `hooks/memory/`、`hooks/skills/`：每天一个文件夹；第二天从最近一天（或 `seed/`）复制过来接着改
+- 细节（格式、日切、记什么、API、落地清单）见 `core/log.md`
+
 # 消息
-- 延迟消息
+- 延迟消息（已实现：`workers/delay_worker.py` —— 投 `_pub/delay` 记一件事，
+  到点它把"15 分钟之前你让我…"推进 `_sub/delay` / `asr`；协议见 `core/queues.md`）
 
 还需要三个元功能
 

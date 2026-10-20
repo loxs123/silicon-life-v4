@@ -80,6 +80,8 @@ QUEUE_FEISHU_SUB = '_sub/feishu'    # 飞书收：收到消息入队
 QUEUE_FEISHU_PUB = '_pub/feishu'    # 飞书发：出站消息队列
 QUEUE_DESKTOP_SUB = '_sub/desktop'  # 桌面出：截图 + 完成回执
 QUEUE_DESKTOP_PUB = '_pub/desktop'  # 桌面入：电脑控制指令
+QUEUE_DELAY_SUB = '_sub/delay'      # 延迟出：到点的那条消息 {'text': …}
+QUEUE_DELAY_PUB = '_pub/delay'      # 延迟入：{'text': …, 'in': 秒}
 
 # ======================= 凭据（环境变量，见 set_dashscope_env.cmd）=======================
 DASHSCOPE_API_KEY = os.environ.get('DASHSCOPE_API_KEY', '')
@@ -119,6 +121,14 @@ FEISHU_DEFAULT_CHAT_ID = ''
 # ======================= 桌面 =======================
 DESKTOP_HOLD_S = 0.05         # keyboard 指令缺省按压时长（秒）
 DESKTOP_JPEG_QUALITY = 85     # 截图 JPEG 质量（0-100）
+
+# ======================= 延迟消息（DelayWorker）=======================
+# "15 分钟之后提醒我喝水"不能在 hook 里 sleep（会拖死 brain 主循环）：上游投
+# {'text': …, 'in': <秒>} 进 _pub/delay，DelayWorker 守时钟，到点把「多久之前你让我
+# 做什么」推进 _sub/delay。只碰这两条队列，不关联任何别的队列。
+DELAY_POLL_S = 1.0            # 主循环每轮睡多久（秒）：到点精度就是这个量级
+# 到点推出去的那句话，占位符：{ago}（'15 分钟之前' / '刚刚'）、{text}
+DELAY_ECHO_TEMPLATE = '{ago}你让我{text}，现在到点了，你来接着办。'
 
 # ======================= 睡眠 / dream =======================
 # 白天跑 Pipeline，晚上跑 DreamPipeline —— 两者**时间上互斥，不并发**，

@@ -18,6 +18,7 @@ text = self.queues['asr'].get()       # 读
 | `sub/ear` | `QUEUE_EAR_IN` | `msg` | `msg.payload` = `bytes`，裸 PCM **16k/16bit/mono**，640B 一块 |
 | `_sub/feishu` | `QUEUE_FEISHU_SUB` | `dict` | 收到的飞书消息，见下 |
 | `_sub/desktop` | `QUEUE_DESKTOP_SUB` | `dict` | 桌面结果，见下 |
+| `_sub/delay` | `QUEUE_DELAY_SUB` | `dict` | 到点的那条消息，见下 |
 
 ### `sub/leg`
 
@@ -70,6 +71,18 @@ text = self.queues['asr'].get()       # 读
 用 `type` 区分两类。**两种载荷谁先谁后不保证，别依赖顺序。**
 指令无效或执行失败**只打日志、不回执** → 等回执必须设超时。
 
+### `_sub/delay`
+
+```python
+# 到点推的这一条
+{'text': '15 分钟之前你让我提醒我喝水，现在到点了，你来接着办。',
+ 'in': 900.0, 'due_at': <unix秒>, 'fired_at': <unix秒>}
+```
+
+`text` 就是那句话（模板 `config.DELAY_ECHO_TEMPLATE`，占位符 `{ago}` `{text}`）。
+⚠️ 目前**没有下游消费者**：DelayWorker 只负责把它推进来，谁读 `_sub/delay` 谁决定
+下一步（说 / 做 / 转发都行），它不碰 asr / tts 等任何别的队列。
+
 ---
 
 ## 二、写：`put()` 什么
@@ -84,6 +97,7 @@ text = self.queues['asr'].get()       # 读
 | 发下行语音 | `pub/speak` | `QUEUE_SPEAK_OUT` | `bytes` | 裸 PCM **24k/16bit/mono** |
 | 让这台电脑动 | `_pub/desktop` | `QUEUE_DESKTOP_PUB` | `dict` | 见下 |
 | 发飞书 | `_pub/feishu` | `QUEUE_FEISHU_PUB` | `dict` | 见下 |
+| 延迟消息（到点再叫我） | `_pub/delay` | `QUEUE_DELAY_PUB` | `dict` | 见下 |
 | （占位） | `pub/brain` `pub/mouth` | — | — | 格式未定义 |
 
 ### `tts`
@@ -166,4 +180,21 @@ hook 一般不用碰——手动发会打断它的配对。
 
 # 只有要发给「别的会话」时才需要显式指定
 {'text': '你好', 'chat_id': 'oc_别的会话'}
+```
+
+### `_pub/delay`
+
+```python
+{'text': '提醒我喝水', 'in': 900}    # 900 秒后到点 —— 投递只有这一种格式
+```
+
+「15 分钟」写 `900`（自己乘好）。格式固定、**不做校验**：少键或类型不对会在
+DelayWorker 线程里直接抛异常，不会有错误回执。**不阻塞**：投完立刻返回，别自己
+`sleep` 等 —— 睡的是 hook 和 brain 主循环。DelayWorker 每 `DELAY_POLL_S`（默认 1 秒）
+轮询一次队列与到期，所以到点精度是 ±`DELAY_POLL_S`。
+
+```python
+# 典型用法（brain hook 里）
+self.queues['_pub/delay'].put({'text': '提醒我喝水', 'in': 15 * 60})
+print('[brain] remind → _pub/delay: 提醒我喝水 in 900s', flush=True)
 ```

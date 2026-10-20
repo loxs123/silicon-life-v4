@@ -89,7 +89,8 @@ eq12_server/
         ├── brain_worker.py # 大脑：asr 文本 → 流式 LLM → tts
         ├── speak_worker.py # 嘴：tts 文本 → 流式 TTS → pub/speak
         ├── feishu_worker.py# 飞书网关：长连接收发文字/图片（见 §6.1）
-        └── desktop_worker.py# 桌面操作：键鼠/滚轮/截屏（见 §6.2）
+        ├── desktop_worker.py# 桌面操作：键鼠/滚轮/截屏（见 §6.2）
+        └── delay_worker.py # 延迟消息：到点把"你之前让我做的事"推回大脑（见 §6.3）
 ```
 
 ---
@@ -114,7 +115,7 @@ MainLoop()
 - **`__init__` 不做网络操作**：因此可以脱离真实 broker 单独测试（见 §7）。
 - **`stop()` 幂等**，可从任意线程调用；`run()` 的 `finally` 里兜底执行。
 - **停机协议**：`_STOP = object()` 哨兵由 `stop()` 只投给 **`pub/`、`sub/` 前缀**
-  的队列（这两类队列各有固定消费者，拿到哨兵即退出）；`asr`/`tts` 内部队列不投，
+  的队列（这两类队列各有固定消费者，拿到哨兵即退出）；`asr`/`tts` 等内部队列不投，
   避免哨兵被下游 worker 当成业务数据。消费者用 `if item is _STOP: break`（worker 通过
   构造参数 `stop_token` 注入，避免 main_loop ↔ workers 循环导入）。
 - **断线重连**：paho 自动重连，`on_connect` 重新订阅全部 `sub/*`；
@@ -160,7 +161,7 @@ MainLoop()
 
 ---
 
-## 6. 进程内工具 worker（FeishuWorker 飞书 / DesktopWorker 桌面）
+## 6. 进程内工具 worker（FeishuWorker 飞书 / DesktopWorker 桌面 / DelayWorker 延迟消息）
 
 飞书和桌面操作都是 eq12_server **进程内直连外部世界**的口，不经过 MQTT
 （MQTT 只服务 ESP32 器官）。它们各自用两条**内部队列**（在 `src/main_loop.py`
@@ -259,6 +260,33 @@ EQ12「硅基生命」跑在桌面 Windows 主机上，这台电脑就是它可�
 - **当前边界**：brain 尚未接线（读 `_sub/desktop` 截图与完成回执、往 `_pub/desktop`
   发指令）；按键串大小写靠显式 `SHIFT` 组合（如 `"SHIFTA"` 出大写 A）。
 
+### 6.3 延迟消息（DelayWorker）
+
+「15 分钟之后提醒我喝水」这类需求**不能靠 hook 里 `sleep`**（一睡就把 brain 主循环
+拖死），交给 `DelayWorker` 记着，到点推一条消息出来。**它只碰这两条队列，不关联
+任何别的链路**（不碰 asr / tts / 飞书 / 桌面 / MQTT）。
+
+```python
+# 入：_pub/delay —— 只有这一种格式
+{'text': '提醒我喝水', 'in': 900}      # 900 秒后到点（"15 分钟" = 900，自己乘好）
+
+# 出：_sub/delay —— 到点推这一条
+{'text': '15 分钟之前你让我提醒我喝水，现在到点了，你来接着办。',
+ 'in': 900, 'due_at': <unix>, 'fired_at': <unix>}
+```
+
+- **出队列的 `text` 就是那句话**（`config.DELAY_ECHO_TEMPLATE` 套 `{ago}` + `{text}`，
+  「15 分钟之前 / 刚刚」由 `format_ago` 生成）；谁消费 `_sub/delay` 谁决定下一步怎么做。
+- **轮询式主循环**：每轮 `sleep DELAY_POLL_S`（默认 1 秒）→ 非阻塞取空 `_pub/delay` →
+  把到点的推进 `_sub/delay`，所以到点精度是 **±DELAY_POLL_S**（提醒场景够用，也不需要
+  `get(timeout=)`）。
+- **格式固定，不做校验**：缺键/类型不对就在 worker 线程里直接抛异常（`KeyError` 之类），
+  不兜底、不静默吞掉。
+- **停机**：本 worker 不吃哨兵（`_pub/delay` 没有别的消费者，也不用停它），线程是
+  daemon，随进程一起结束。
+- **依赖**：纯标准库；冒烟测试 `python tests/test_delay_worker.py`（免依赖、不联网）。
+- **当前边界**：待办只在内存里，**进程重启就没了**；没有取消 / 查询接口。
+
 ---
 
 ## 7. 不连 broker 的测试
@@ -306,6 +334,9 @@ assert not any(t.is_alive() for t in loop._threads)
 - [x] DesktopWorker 桌面操作：`_pub/desktop` 键鼠/滚轮/截屏指令执行，
       `_sub/desktop` 出 JPEG 截图 + 指令完成回执 `{'type':'done',...}`
       （brain 接线待做，见 §6.2）
+- [x] DelayWorker 延迟消息：`_pub/delay` 投 `{'text':…, 'in': 秒}` → 到点把
+      「15 分钟之前你让我…」推进 `_sub/delay`（只碰这两条队列；下游接线待做，
+      待办只在内存里，见 §6.3）
 - [ ] `EarWorker` 的 ASR 尚未实现（TODO）
 - [ ] `esp32_client` 器官端已实现 ear/speak/eye/leg/face（见其 README）；本端
       `sub/eye`（照片）、`pub/eye`/`pub/leg`/`pub/face`（触发看/动/表情）的消费与触发 worker 待接
@@ -316,3 +347,5 @@ assert not any(t.is_alive() for t in loop._threads)
       `stop()` 每队列只投一个哨兵会漏停（需按消费者数投放）
 - [ ] 无消费者的 sub 队列在每次 `stop()` 后会残留一个 `_STOP` 哨兵；
       若之后热重启并给该队列新加 worker，注意先清掉旧哨兵
+- [ ] DelayWorker 只支持一次性延迟（无"每 N 分钟重复"），待办只在内存里、进程重启即丢；
+      它不吃哨兵（线程 daemon，随进程退出）
