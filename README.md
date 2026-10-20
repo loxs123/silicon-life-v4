@@ -71,7 +71,7 @@ silicon-life-v4/
 │       ├── core/architecture.md#   hook 编写指南（self 上有什么、日志纪律）
 │       ├── core/queues.md     #   队列接口：读什么、写什么、载荷长什么样
 │       ├── core/log.md        #   （规划）日志与每日快照：hooks/logs（每天一文件）、
-│       │                       #   hooks/memory + hooks/skills（每天一文件夹）+ 日切
+│       │                       #   hooks/memory + hooks/skills + hooks/states（每天一文件夹）+ 日切
 │       └── workers/
 │           ├── ear_worker.py       # 耳：sub/ear(16k PCM) → DashScope 流式 ASR → asr 队列
 │           ├── brain_worker.py     # 脑：asr 文本 → 大模型流式回复(成句即送) → tts 队列

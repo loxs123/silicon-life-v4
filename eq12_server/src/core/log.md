@@ -5,16 +5,17 @@
 
 ## 0. 一句话
 
-`src/core/hooks/` 下三个并列文件夹分工：
+`src/core/hooks/` 下四个并列文件夹分工：
 
 | 文件夹 | 形态 | 内容 |
 |---|---|---|
 | `hooks/logs/` | **每天一个文件** `YYYY-MM-DD.log` | 当天的操作流水，**一行一个操作**，只追加 |
 | `hooks/memory/` | **每天一个文件夹** `YYYY-MM-DD/` | 当天的记忆（`self.md`、`experience.md` …） |
 | `hooks/skills/` | **每天一个文件夹** `YYYY-MM-DD/` | 当天的技能（一个 skill 一个 md） |
+| `hooks/states/` | **每天一个文件夹** `YYYY-MM-DD/` | 当天的运行状态（当前目标、进度、开关 …，一个 state 一个文件） |
 
-`memory/` 和 `skills/` 的当天文件夹 = **前一天的副本**（第二天开张时复制），所以它们既
-是"当前状态"，也天然是"历史版本"。`logs/` 不需要复制 —— 每天新开一个空文件。
+`memory/`、`skills/`、`states/` 的当天文件夹 = **前一天的副本**（第二天开张时复制），所以
+它们既是"当前状态"，也天然是"历史版本"。`logs/` 不需要复制 —— 每天新开一个空文件。
 
 ## 1. 为什么这么设计
 
@@ -22,9 +23,9 @@
 |---|---|
 | 模型可见 = 已落日志（见 `readme.md`） | 凡是模型读得到、改得动的动作，都写进当天的 `logs/YYYY-MM-DD.log` |
 | 每天一份 = 免费的历史版本 | 想回看"上周三我的技能长什么样"，直接进 `skills/2025-06-03/` |
-| 三种内容分工明确 | `logs` = 发生过什么（只追加）｜`memory` = 当前认知｜`skills` = 当前能力 |
+| 四类内容分工明确 | `logs` = 发生过什么（只追加）｜`memory` = 当前认知｜`skills` = 当前能力｜`states` = 当前运行状态 |
 
-⚠️ **log 只追加，永不修改**；memory / skills 是"当前状态"，log 是"状态是怎么变来的"。
+⚠️ **log 只追加，永不修改**；memory / skills / states 是"当前状态"，log 是"状态是怎么变来的"。
 不要把 log 当记忆用（别指望在里面"改"东西），也不要把每天的流水塞进 `experience.md`。
 
 ## 2. 目录布局
@@ -48,21 +49,26 @@ eq12_server/src/core/hooks/
 │   ├── seed/                    # 第 0 天（可放一两个初始 skill）
 │   ├── 2025-06-01/
 │   └── 2025-06-02/
+├── states/                      # 运行状态：每天一个文件夹
+│   ├── seed/                    # 第 0 天（可放初始状态，比如 goal.md）
+│   ├── 2025-06-01/              #   从 seed 复制
+│   └── 2025-06-02/              #   从 06-01 复制，然后在这一份上继续改
 ├── goal.py  memory.py  skill.py  system.py    # 白天 hook
 └── __init__.py
 ```
 
 - **代码里只写"当天的"**：`memory_dir() / 'self.md'`、`skills_dir() / 'reminder.md'`、
-  写日志走 `log(...)`（自己找当天的文件名），日期由 `log.py` 统一算，hook 里不出现日期。
+  `states_dir() / 'goal.md'`，写日志走 `log(...)`（自己找当天的文件名），日期由 `log.py`
+  统一算，hook 里不出现日期。
 - `seed/` 是唯一跟着代码版本走的部分；`YYYY-MM-DD` 这些是运行时状态（见 §8 的 gitignore）。
 
 ## 3. 日切（第二天复制前一天）
 
-规则一条：**访问当天的 memory / skills 目录时，如果它不存在，就把最近一天的目录
-（没有就用 `seed/`）复制过来。**
+规则一条：**访问当天的 memory / skills / states 目录时，如果它不存在，就把最近一天的
+目录（没有就用 `seed/`）复制过来。**
 
 ```python
-def _day_dir(kind, date=None):            # kind = 'memory' | 'skills'
+def _day_dir(kind, date=None):            # kind = 'memory' | 'skills' | 'states'
     root = HOOKS / kind
     d = root / (date or time.strftime('%Y-%m-%d'))
     if not d.exists():
@@ -73,6 +79,7 @@ def _day_dir(kind, date=None):            # kind = 'memory' | 'skills'
 ```
 
 - **不挂后台定时器**：谁用谁触发，跨过零点后的第一个动作就把目录切过去。
+- **`最近一个存在的日期目录` 只匹配 `YYYY-MM-DD`**，别把 `seed/` 当日期目录算进去。
 - **logs 不参与日切**：`log()` 发现当天的文件不存在就建一个空的，不需要复制。
 - ⚠️ **dream 跨午夜**：夜间链 23:00–07:00 会跨过 00:00 —— 当前选择是**不 pin 日期**：
   零点前的改动落在 06-01，零点后的落在 06-02。想改就让 `DreamPipeline` 开头
