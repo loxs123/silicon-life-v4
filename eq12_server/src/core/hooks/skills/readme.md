@@ -1,23 +1,45 @@
-# skill 格式
+```xml
+<skill>
+<name>
 
-```markdown
-## name
-xxx
+</name>
 
-## match_function
-```python
-def match(goal):
-    ...
-    # 返回 True or False
-```
+<tags>
+<tag>...</tag>
+<tag>...</tag>
+</tags>
 
-## content
+<description>
+
+</description>
+
+<target></target>
+
+<steps>
+<step>
+<step-name></step-name>
+<step-content></step-content>
+</step>
+<step>
+<step-name></step-name>
+<step-content></step-content>
+</step>
+</steps>
+
+<notes>
+<note>...</note>
+<note>...</note>
+</notes>
+
+<verify>
 ...
+</verify>
 
+<output>
+
+</output>
+
+</skill>
 ```
 
-
-# skill 输出内容
-1. 子目标
-2. 原子动作
-
+应该是一种xml格式，最容易修改。
