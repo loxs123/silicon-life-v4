@@ -1,0 +1,4 @@
+<atom_action>
+<queue>队列名：tts / pub/leg / pub/face / pub/eye / pub/speak / _pub/desktop / _pub/feishu / _pub/delay</queue>
+<arg>投进去的东西：tts 投一句话；pub/leg 投 forward,50,2；pub/face 投 happy；pub/eye 投 b'photo'；_pub/desktop 投 {"type": "keyboard", "value": "CTRLA"} 这种 JSON；_pub/feishu 投 {"text": "你好"} 或 {"img": "base64 JPEG"}；_pub/delay 投 {"text": "提醒我喝水", "in": 900}</arg>
+</atom_action>
