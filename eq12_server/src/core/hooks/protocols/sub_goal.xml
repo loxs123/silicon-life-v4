@@ -1,0 +1,15 @@
+<sub_goals>
+
+<!-- 子目标列表：一个子目标一条，按要做的先后顺序排；只出下一层，不往里套 -->
+
+<sub_goal>
+<name>子目标叫什么，四个字左右</name>
+<content>要做什么、做到什么算完成</content>
+</sub_goal>
+
+<sub_goal>
+<name>再一个子目标</name>
+<content>要做什么、做到什么算完成</content>
+</sub_goal>
+
+</sub_goals>
