@@ -1,0 +1,93 @@
+<skill>
+<id></id>
+<type>特殊</type>
+<name>memory_creator</name>
+<tags>
+<tag>记忆</tag>
+<tag>元技能</tag>
+</tags>
+<description>把刚做完的一件事写成一条记忆</description>
+<target>一个 goal 刚完成、里面有值得记住的东西的时候</target>
+<steps>
+<step>
+<step-name>看值不值得记</step-name>
+<step-content>别只盯着踩过的坑。这次任务里看到的东西、确认过的事实（环境什么样、文件在哪、谁在跟我说话、界面上有什么）、别人说过的话、当时怎么判断的，都算值得记的经验。只排除两种：流水账（几点做了什么、“做完了”本身），和“以后这类事怎么做”（那是技能的事）</step-content>
+</step>
+<step>
+<step-name>提炼一条</step-name>
+<step-content>name 一句话当标题；content 写清楚发生了什么、结论是什么，别写成步骤</step-content>
+</step>
+<step>
+<step-name>填 XML</step-name>
+<step-content>照 output 里的骨架填；time 用这个 goal 的 finish-time；这次用到的技能写进 related-skills，之前相关的旧记忆写进 related-memorys，没有就整段不写</step-content>
+</step>
+<step>
+<step-name>自查</step-name>
+<step-content>写完自己对着骨架和要求读一遍：字段齐不齐、标签订得对不对、有没有编造没发生的事、content 里有没有混进“以后该怎么做”。不对就自己改到对为止</step-content>
+</step>
+</steps>
+<notes>
+<note>记忆记这次任务里看到、确认、想明白的东西：事实、观察、结论、坑</note>
+<note>不编造没发生的事；拿不准的写进 description，别塞进 content</note>
+<note>tags 至少一个，content 至少一句；related-skills 和 related-memorys 没有就整段省掉</note>
+<note>time 用 goal 的 finish-time，让它和“什么时候做完的”对得上</note>
+<note>只输出一个 &lt;memory&gt;，不解释、不加 ``` 围栏</note>
+</notes>
+<verify>是一条字段齐全的 &lt;memory&gt;，name 和 content 都不是空的</verify>
+<output><![CDATA[
+<memory>
+<id></id>
+<name>一句话标题</name>
+<tags>
+<tag>标签，至少一个</tag>
+</tags>
+<description>一句话说这条记忆是关于什么的</description>
+<content>发生了什么、结论是什么</content>
+<time>2026-10-28 14:20:00</time>
+<related-skills>
+<skill>
+<id>skill_0007</id>
+<reason>这次就是用它做的</reason>
+</skill>
+</related-skills>
+<related-memorys>
+<memory>
+<id>memory_0003</id>
+<reason>为什么和这条记忆相关</reason>
+</memory>
+</related-memorys>
+</memory>
+
+例如“截屏发飞书”那个 goal 做完，记住等错载荷这个坑：
+
+<memory>
+<name>截图别按顺序等回执</name>
+<tags>
+<tag>飞书</tag>
+<tag>截屏</tag>
+</tags>
+<description>一次成功把截图发到飞书之后记下的坑</description>
+<content>_sub/desktop 里 screen 和 done 两条谁先到不保证。这次先按顺序等，拿到的是 done 那条，白等了一场；正确做法是按 type 认，只认 type 是 screen 的。</content>
+<time>2026-10-28 14:20:00</time>
+<related-skills>
+<skill>
+<id>skill_0007</id>
+<reason>截图发飞书用的就是这个技能</reason>
+</skill>
+</related-skills>
+</memory>
+
+同一个 goal 里顺手看到的东西，也一样值得记：
+
+<memory>
+<name>下载目录堆满零散截图</name>
+<tags>
+<tag>环境</tag>
+<tag>文件</tag>
+</tags>
+<description>做截图任务时顺带看到的，跟任务无关但以后用得上</description>
+<content>这台电脑的下载目录里堆着两百多个 png，全是截图，文件名带日期。以后要找某天的旧截图，直接去那儿翻，比重新截一遍快。</content>
+<time>2026-10-28 14:20:00</time>
+</memory>
+]]></output>
+</skill>

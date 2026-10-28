@@ -35,7 +35,7 @@
 <note>名字和标签尽量短，以后靠它们找技能</note>
 <note>只输出一个 &lt;skill&gt;，不解释、不加 ``` 围栏</note>
 </notes>
-<verify>check(文本, 'skill') 返回空串</verify>
+<verify>是一个字段齐全的 &lt;skill&gt;：type、name、tags、steps、notes、verify、output 都不是空的</verify>
 <output><![CDATA[
 <skill>
 <id></id>
