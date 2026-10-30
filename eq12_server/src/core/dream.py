@@ -5,6 +5,8 @@
 3. 优化技能，进行技能的合并和优化（技能匹配方式、技能本身）
 """
 import time
+
+from ..config import DREAM_POLL_S
 from .dream_hooks import HOOKS
 
 
@@ -21,6 +23,7 @@ class DreamPipeline:
 
         白天 brain_worker 不会调这里 —— 互斥由调用方的 if/else 保证。
         """
+        from ..workers.brain_worker import is_night   # 判据在 brain_worker；放这里免得循环导入
         self.user_info = {}
         while is_night():
             for hook in self.hooks:
