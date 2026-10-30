@@ -2,6 +2,11 @@
 <id>1</id>
 <name>fdsa</name>
 <content>fsdf</content>
+<child-goals>
+<goal-id></goal-id>
+</child-goals>
+<father-goal-id>
+</father-goal-id>
 <create-time>2026-10-28 00:38:00</create-time>
 <finish-time>2026-10-28 00:38:00</finish-time>
 </goal>
