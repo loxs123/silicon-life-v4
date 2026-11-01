@@ -1,6 +1,9 @@
 import os
 import dashscope
 
+from . import loader
+from .loader import GoalLoader, MemoryLoader, SkillLoader, day_dir
+
 MODEL = 'qwen-plus'        # 换模型只改这里
 MAX_TOKENS = 2048          # 默认输出上限（生成结果只会 <= 它）
 THINKING_BUDGET = 0        # 默认不思考：想得越久越慢越贵，闲聊别开
@@ -35,6 +38,59 @@ def call_llm(messages, model=MODEL, max_tokens=MAX_TOKENS,
         print('[llm] 失败 %s: %s' % (resp.status_code, resp.message), flush=True)
         return None
     return resp.output.choices[0].message.content
+
+
+# ---------- 统一上下文：所有调用同一个消息序列，越稳定越靠前，好吃前缀缓存 ----------
+#
+#   system  memory/<今天>/self.xml 的 <content>       一天不变（夜里 dream 才改）
+#   user    # 子目标格式 / # 原子动作格式               一天不变
+#   user    # 元技能：造技能 / # 元技能：写记忆         一天不变
+#   user    # 我记得的事                               写新记忆才变
+#   user    # 我现有的技能                             造新技能才变
+#   user    # 目标链 / # 当前目标                      同一个 goal 不变
+#   user    # 所用技能                                 选定后不变（没选就没有这条）
+#   user    # 经过                                     只往后加
+#   user    # 现在要做                                 每种调用不同
+# 每段一条消息，不全塞 system。
+
+RECENT_MEMORY = 10
+SELF = 'self'          # memory/<今天>/self.xml：我是谁，作 system；不进「我记得的事」
+
+
+def _read(path):
+    with open(path, encoding='utf-8') as f:
+        return f.read().strip()
+
+
+def skills():
+    """「我现有的技能」里列出的技能，编号从 1 开始（选技能时按这个编号回答）。"""
+    return [s for s in SkillLoader.all() if s.type in ('子目标', '原子动作')]
+
+
+def context(goal, ask, skill=None, history='（还没开始）'):
+    """拼一次调用的 messages。goal / skill 是 loader；history 是「经过」；ask 是最后一句要求。"""
+    protocols = os.path.join(loader.HOOKS_DIR, 'protocols')
+    mems = [m for m in MemoryLoader.all() if m._id != SELF][-RECENT_MEMORY:]
+    chain = [goal]
+    while chain[0].father is not None:
+        chain.insert(0, GoalLoader(chain[0].father))
+
+    parts = [
+        '# 子目标格式\n' + _read(os.path.join(protocols, 'sub_goal.xml')),
+        '# 原子动作格式\n' + _read(os.path.join(protocols, 'atom_action.xml')),
+        '# 元技能：造技能\n' + _read(os.path.join(day_dir('skills'), 'skill_creator.xml')),
+        '# 元技能：写记忆\n' + _read(os.path.join(day_dir('skills'), 'memory_creator.xml')),
+        '# 我记得的事\n' + ('\n'.join('- %s：%s' % (m.name, m.content) for m in mems) or '（还没有）'),
+        '# 我现有的技能\n' + ('\n'.join('%d. %s（%s）：%s｜什么时候用：%s' % (i, s.name, s.type, s.description, s.target)
+                                   for i, s in enumerate(skills(), 1)) or '（还没有）'),
+        '# 目标链\n' + '\n'.join('%s- %s：%s' % ('  ' * i, g.name, g.content) for i, g in enumerate(chain)),
+        '# 当前目标\n' + goal.raw,
+    ]
+    if skill is not None:
+        parts.append('# 所用技能\n' + skill.raw)
+    parts += ['# 经过\n' + history, '# 现在要做\n' + ask]
+    return ([{'role': 'system', 'content': MemoryLoader(SELF).content.strip()}]
+            + [{'role': 'user', 'content': p} for p in parts])
 
 
 if __name__ == '__main__':

@@ -3,7 +3,7 @@
 # 约束 : 人情味
 # 
 
-from .hook_examples import HOOKS
+from .hooks import HOOKS
 
 class Pipeline:
     def __init__(self, queues):

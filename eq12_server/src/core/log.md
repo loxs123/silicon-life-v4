@@ -1,7 +1,7 @@
 # 日志与每日快照（log）
 
-> 状态：**设计稿**。`src/core/log.py` 还没写，hook 也还没接线；本文件是落地时的依据，
-> 写完代码回来更新这里。
+> 状态：**已落地最小版**。`src/core/log.py`（log / read）+ `tools/loader.py` 的 `day_dir()`（日切）。
+> 字段里 `arg` 是 dict（带 `goal` 编号），不截断；`out` 截断 300 字。
 
 ## 0. 一句话
 
@@ -10,7 +10,7 @@
 | 文件夹 | 形态 | 内容 |
 |---|---|---|
 | `hooks/logs/` | **每天一个文件** `YYYY-MM-DD.log` | 当天的操作流水，**一行一个操作**，只追加 |
-| `hooks/memory/` | **每天一个文件夹** `YYYY-MM-DD/` | 当天的记忆（`self.md`、`experience.md` …） |
+| `hooks/memory/` | **每天一个文件夹** `YYYY-MM-DD/` | 当天的记忆（`self.xml` 我是谁 + `memory_NNNN.xml`，都按 `protocols/memory.xml`） |
 | `hooks/skills/` | **每天一个文件夹** `YYYY-MM-DD/` | 当天的技能（一个 skill 一个 md） |
 | `hooks/states/` | **每天一个文件夹** `YYYY-MM-DD/` | 当天的运行状态（当前目标、进度、开关 …，一个 state 一个文件） |
 
@@ -26,7 +26,7 @@
 | 四类内容分工明确 | `logs` = 发生过什么（只追加）｜`memory` = 当前认知｜`skills` = 当前能力｜`states` = 当前运行状态 |
 
 ⚠️ **log 只追加，永不修改**；memory / skills / states 是"当前状态"，log 是"状态是怎么变来的"。
-不要把 log 当记忆用（别指望在里面"改"东西），也不要把每天的流水塞进 `experience.md`。
+不要把 log 当记忆用（别指望在里面"改"东西），也不要把每天的流水写成记忆。
 
 ## 2. 目录布局
 
@@ -38,11 +38,10 @@ eq12_server/src/core/hooks/
 │   └── 2025-06-02.log
 ├── memory/                      # 记忆：每天一个文件夹
 │   ├── seed/                    # 第 0 天的模板（跟着代码走）
-│   │   ├── self.md
-│   │   └── experience.md
+│   │   └── self.xml
 │   ├── 2025-06-01/              # 第一天：从 seed 复制
-│   │   ├── self.md
-│   │   └── experience.md
+│   │   ├── self.xml
+│   │   └── memory_0001.xml
 │   └── 2025-06-02/              # 第二天：从 06-01 复制，然后在这一份上继续改
 ├── skills/                      # 技能：每天一个文件夹
 │   ├── readme.md                # skill 的格式说明（不是当天的技能）
@@ -57,7 +56,7 @@ eq12_server/src/core/hooks/
 └── __init__.py
 ```
 
-- **代码里只写"当天的"**：`memory_dir() / 'self.md'`、`skills_dir() / 'reminder.md'`、
+- **代码里只写"当天的"**：`MemoryLoader('self')`、`skills_dir() / 'reminder.md'`、
   `states_dir() / 'goal.md'`，写日志走 `log(...)`（自己找当天的文件名），日期由 `log.py`
   统一算，hook 里不出现日期。
 - `seed/` 是唯一跟着代码版本走的部分；`YYYY-MM-DD` 这些是运行时状态（见 §8 的 gitignore）。
@@ -92,7 +91,7 @@ def _day_dir(kind, date=None):            # kind = 'memory' | 'skills' | 'states
 ```jsonl
 {"t":"12:03:11","kind":"llm","who":"brain.llm_stream","arg":{"model":"qwen-plus","messages":3,"tok_in":812},"out":"你好呀。","ms":1420}
 {"t":"12:05:40","kind":"skill","who":"skill.write","arg":{"path":"reminder.md","op":"create","lines":18},"out":"ok","ms":12}
-{"t":"12:07:02","kind":"memory","who":"memory.append","arg":{"path":"experience.md","op":"append","chars":64}}
+{"t":"12:07:02","kind":"memory","who":"memory","arg":{"goal":2,"memory":1},"out":"截图发飞书要等截图回执"}
 {"t":"12:09:30","kind":"tool","who":"delay","arg":{"text":"提醒我喝水","in":900}}
 {"t":"12:09:31","kind":"io","who":"pub/face","arg":{"payload":"think"}}
 {"t":"00:00:02","kind":"day","who":"roll","arg":{"kind":"memory","from":"2025-06-01"}}

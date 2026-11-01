@@ -11,3 +11,4 @@ eq12_server/src/core/hooks/logs/*.log
 eq12_server/src/core/hooks/memory/2*/
 eq12_server/src/core/hooks/skills/2*/
 eq12_server/src/core/hooks/states/2*/
+eq12_server/cache/
