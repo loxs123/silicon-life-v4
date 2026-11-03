@@ -1,0 +1,94 @@
+<queue_msgs>
+
+<!-- 队列里收到的消息就是下面这些；hook 里用 self.queues[<queue>].get() 收。
+     取值方式分两种：
+       · asr / _sub/* ：直接就是 str 或 dict，拿来就用；
+       · sub/*       ：是 paho 的 msg 对象，内容在 msg.payload（bytes），
+                       文本 decode('utf-8')，JSON 再 json.loads，音频直接是裸 PCM。
+     图片一律转成 base64（JPEG/PNG）放在 data 字段：b64decode 就能写文件、或原样转给飞书。 -->
+
+<!-- 听觉：ASR 识别出来的一句话，字符串。空文本不入队 -->
+<queue_msg>
+<queue>asr</queue>
+<type>text</type>
+<text>你好呀</text>
+</queue_msg>
+
+<!-- 飞书·文字：收到别人发来的文字（没有 type 键就是文字） -->
+<queue_msg>
+<queue>_sub/feishu</queue>
+<type>text</type>
+<text>你好</text>
+<message_id>om_...</message_id>
+<chat_id>oc_...</chat_id>
+<sender>ou_...</sender>
+</queue_msg>
+
+<!-- 飞书·图片：图片本体已经转成 base64 放在 data；image_key 留着回溯 -->
+<queue_msg>
+<queue>_sub/feishu</queue>
+<type>image</type>
+<data>base64 JPEG/PNG</data>
+<image_key>img_v2_...</image_key>
+<message_id>om_...</message_id>
+<chat_id>oc_...</chat_id>
+<sender>ou_...</sender>
+</queue_msg>
+
+<!-- 到点提醒：_pub/delay 投 {'text': '提醒我喝水', 'in': 900}，到点了从这收一条 -->
+<queue_msg>
+<queue>_sub/delay</queue>
+<type>text</type>
+<text>15 分钟之前你让我提醒我喝水，现在到点了，你来接着办。</text>
+<in>900</in>
+<due_at>1793000000.0</due_at>
+<fired_at>1793000002.3</fired_at>
+</queue_msg>
+
+<!-- 这台电脑·截屏：data 是 base64 JPEG，按 type 认；和 done 谁先到不保证 -->
+<queue_msg>
+<queue>_sub/desktop</queue>
+<type>screen</type>
+<data>base64 JPEG</data>
+<width>1920</width>
+<height>1080</height>
+<size>48213</size>
+<fmt>jpeg</fmt>
+<time>1793000000</time>
+</queue_msg>
+
+<!-- 这台电脑·完成回执：command 是原样回传的那条指令 -->
+<queue_msg>
+<queue>_sub/desktop</queue>
+<type>done</type>
+<command>{"type": "screenshot"}</command>
+<time>1793000000</time>
+</queue_msg>
+
+<!-- 腿：msg.payload 是 bytes，decode 后是 done:<规范化指令>。
+     投 forward,50,2秒，回执是 done:forward,50,2，别按字符串全等比 -->
+<queue_msg>
+<queue>sub/leg</queue>
+<type>text</type>
+<text>done:forward,50,2</text>
+</queue_msg>
+
+<!-- 眼睛：msg.payload 是 bytes，json.loads 后见下；data 是 base64 JPEG -->
+<queue_msg>
+<queue>sub/eye</queue>
+<type>photo</type>
+<data>base64 JPEG</data>
+<width>320</width>
+<height>240</height>
+<size>48213</size>
+<time>2026-10-28 12:00:00</time>
+</queue_msg>
+
+<!-- 耳朵：msg.payload 是原始音频不是图片，16k/16bit/mono 裸 PCM，一块 640B -->
+<queue_msg>
+<queue>sub/ear</queue>
+<type>pcm</type>
+<data>640B 裸 PCM</data>
+</queue_msg>
+
+</queue_msgs>

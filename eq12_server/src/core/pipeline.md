@@ -69,3 +69,27 @@ target1, target2, ...
 ```
 
 
+最小实现
+
+
+
+### user_info 数据结构
+
+- memory
+- goals
+- cur_goal
+- cur_skill
+- context
+  
+memory -> goal -> retrieval -> skill creator -> skill -> context
+
+### 落日志数据结构
+
+- create memory
+创建记忆
+
+- create goal
+建立目标
+
+- goal done
+

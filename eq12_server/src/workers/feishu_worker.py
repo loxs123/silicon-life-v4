@@ -19,8 +19,10 @@ eq12_server 进程内直连飞书 OpenAPI（WebSocket 长连接收事件、HTTPS
         文字:  {'feishu': True, 'text': <str>, 'message_id': <str>,
                 'chat_id': <str>, 'sender': <str>}
         图片:  {'feishu': True, 'type': 'image', 'image_key': <str>,
-                'message_id': <str>, 'chat_id': <str>, 'sender': <str>}
-                （图片本体要等视觉识别时才按 image_key 下载，骨架阶段只记录）
+                'data': <base64 JPEG/PNG>, 'message_id': <str>,
+                'chat_id': <str>, 'sender': <str>}
+                （收到就按 image_key 下载、转 base64 放 data；下载失败就只有
+                 image_key。协议见 core/hooks/protocols/queue.xml）
 
     上游 -> feishu（_pub/feishu 队列里的消息）：
         dict {'text': <str>, 'chat_id': <str>}          → 给会话发一条文字
@@ -208,16 +210,22 @@ class FeishuWorker:
             image_key = (content.get('image_key') or '').strip()
             if not image_key:
                 return
-            print('[Feishu] 收到图片(%s): key=%s' % (sender_name or '?',
-                                                    image_key), flush=True)
-            self.queues[QUEUE_FEISHU_SUB].put({
+            data = self._image_base64(image_key)
+            print('[Feishu] 收到图片(%s): key=%s %s' % (
+                sender_name or '?', image_key,
+                '%dB base64' % len(data) if data else '（下载失败）'),
+                flush=True)
+            payload = {
                 'feishu': True,
                 'type': 'image',
                 'image_key': image_key,
                 'message_id': message_id,
                 'chat_id': chat_id,
                 'sender': sender_name,
-            })
+            }
+            if data:
+                payload['data'] = data
+            self.queues[QUEUE_FEISHU_SUB].put(payload)
         else:
             print('[Feishu] 忽略消息类型: %s' % mtype, flush=True)
 
@@ -277,6 +285,24 @@ class FeishuWorker:
                 pass
             self._api = b.build()
         return self._api
+
+    def _image_base64(self, image_key):
+        """按 image_key 下载图片本体，转成 base64 JPEG/PNG；拿不到返回空串。
+
+        入队时图的 base64 就放在 data 里，下游直接 b64decode 存文件 / 转存都行。
+        """
+        try:
+            from lark_oapi.api.im.v1 import GetImageRequest
+            req = GetImageRequest.builder().image_key(image_key).build()
+            resp = self._api_client().im.v1.image.get(req)
+            if getattr(resp, 'code', 1) == 0 and getattr(resp, 'file', None):
+                return base64.b64encode(resp.file.read()).decode('ascii')
+            print('[Feishu] 图片下载失败: %s（%s）'
+                  % (image_key, _resp_err(resp)), flush=True)
+        except Exception as e:
+            print('[Feishu] 图片下载异常[%s]: %s（%s）'
+                  % (type(e).__name__, e, image_key), flush=True)
+        return ''
 
     def _send_text_to_chat(self, chat_id, text):
         """主动给会话发一条文字（SDK: im.v1.message.create，不引用任何消息）"""

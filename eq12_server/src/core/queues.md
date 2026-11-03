@@ -52,11 +52,12 @@ text = self.queues['asr'].get()       # 读
 # 文字消息（没有 type 键）
 {'feishu': True, 'text': '你好', 'message_id': 'om_...', 'chat_id': 'oc_...', 'sender': 'ou_...'}
 
-# 图片消息（多了 type 和 image_key）
+# 图片消息（多了 type 和 image_key；data 是 base64 图片本体）
 {'feishu': True, 'type': 'image', 'image_key': 'img_v2_...',
- 'message_id': 'om_...', 'chat_id': 'oc_...', 'sender': 'ou_...'}
+ 'data': '<base64 JPEG/PNG>', 'message_id': 'om_...', 'chat_id': 'oc_...', 'sender': 'ou_...'}
 ```
-靠**有没有 `type` 键**区分这两种；其它消息类型不入队。
+靠**有没有 `type` 键**区分这两种；其它消息类型不入队。图片收到就按 `image_key` 下载转
+base64 放 `data`（下载失败时没有 `data`）。完整格式见 `core/hooks/protocols/queue.xml`。
 
 ### `_sub/desktop`
 
