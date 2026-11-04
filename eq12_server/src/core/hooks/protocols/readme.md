@@ -9,6 +9,12 @@
 ### 目标结束
 {"type":"finish-goal", "content": "<goal-id>123</goal-id>", "time": "xxxx-xx-xx xx:xx:xx"}
 
+### 等待消息
+{"type":"wait-message", "content":"<id>1</id><msg-type></msg-type><goal-id>123</goal-id>", "time": "xxxx-xx-xx xx:xx:xx"}
+
+### 消息到达
+{"type":"receive-message", "content":"<id>1</id>", "time": "xxxx-xx-xx xx:xx:xx"}
+
 ### 确认是否完成目标目标
 {"type": "check-goal", "content": "<goal><goal-id>1</goal-id><done>1</done><reason>可选</reason></goal>", "time": "xxxx-xx-xx xx:xx:xx"}
 
