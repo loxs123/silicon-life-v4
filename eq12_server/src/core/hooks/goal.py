@@ -12,7 +12,9 @@ import queue
 import time
 import xml.etree.ElementTree as ET
 
+from ..info import Info
+
 # goal-adjustor 放在这里完成
 # 上一个目标失败也需要调整目标树
-def hook(self):
+def hook(cur_info: Info):
     ...

@@ -4,6 +4,7 @@
 # 
 
 from .hooks import HOOKS
+from .info import Info
 
 class Pipeline:
     def __init__(self, queues):
@@ -17,6 +18,6 @@ class Pipeline:
         """
         也需要一个回调自己的机制
         """
-        self.user_info = {}      # ★ 每轮重置
+        cur_info = Info(queues=self.queues)  # ★ 每轮重置
         for hook in self.hooks: # 每次调用一次模型
-            hook(self)                 # hook 的第一参数就是 self（见 core/architecture.md）
+            hook(cur_info)

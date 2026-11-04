@@ -1,4 +1,7 @@
 import re
 
-def hook(self):
+from ..info import Info
+
+
+def hook(cur_info: Info):
     ...

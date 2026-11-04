@@ -2,6 +2,7 @@ import time
 
 from ..config import DREAM_NIGHT_END
 from .dream_hooks import HOOKS
+from .info import Info
 
 
 class DreamPipeline:
@@ -10,9 +11,9 @@ class DreamPipeline:
         self.hooks = HOOKS
 
     def run(self):
-        self.user_info = {}
+        cur_info = Info(queues=self.queues)
         for hook in self.hooks:
-            hook(self)
+            hook(cur_info)
         now = time.localtime()
         target = time.mktime((now.tm_year, now.tm_mon, now.tm_mday,
                               DREAM_NIGHT_END, 0, 0, 0, 0, -1))

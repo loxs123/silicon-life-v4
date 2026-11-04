@@ -3,6 +3,7 @@ import shutil
 from datetime import date, datetime, timedelta
 
 from ...config import DREAM_NIGHT_START
+from ..info import Info
 
 HOOKS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'hooks')
 
@@ -30,7 +31,7 @@ def _copy_day(kind, day):
         os.makedirs(target, exist_ok=True)
 
 
-def hook(self):
+def hook(cur_info: Info):
     day = _dream_day()
     _copy_day('skills', day)
     _copy_day('memory', day)
