@@ -36,6 +36,7 @@
 ### 原子动作
 {"type": "atom-action", "content":"格式见atom_action.xml", "time":"xxxx-xx-xx xx:xx:xx"}
 
+eq12_server\src\core\hooks\logs 每天一个日志文件 放在这个目录
 
 ## user_info 数据结构
 
@@ -87,7 +88,7 @@ skill.py
 action.py -> 原子动作 异步总结 （如果有原子动作同时必须要加入监控）
           -> 创建子目标 同步执行goal_checker
 输出两个 1. 动作 2. 是否需要goal_checker
-goal_checker.py 检查目标是否完成
+valid.py 检查目标是否完成
 memory_save.py 异步保存记忆
 
 用来组装属于自己的那部分

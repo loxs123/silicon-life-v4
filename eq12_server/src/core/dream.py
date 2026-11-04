@@ -1,31 +1,20 @@
-"""DreamPipeline —— 夜间链，与白天的 Pipeline 并列。
-
-1. 优化记忆，暂定将记忆设置为单个markdown文件，文件中每个记忆带有时间
-2. 优化系统，优化价值观等
-3. 优化技能，进行技能的合并和优化（技能匹配方式、技能本身）
-"""
 import time
 
-from ..config import DREAM_POLL_S
+from ..config import DREAM_NIGHT_END
 from .dream_hooks import HOOKS
 
 
 class DreamPipeline:
     def __init__(self, queues):
-        """
-        queues 是 {队列名: queue.Queue}，和 Pipeline 收的是同一个字典。
-        """
         self.queues = queues
         self.hooks = HOOKS
 
     def run(self):
-        """睡一整晚：整条链反复跑，天亮就醒（返回）。
-
-        白天 brain_worker 不会调这里 —— 互斥由调用方的 if/else 保证。
-        """
-        from ..workers.brain_worker import is_night   # 判据在 brain_worker；放这里免得循环导入
         self.user_info = {}
-        while is_night():
-            for hook in self.hooks:
-                hook(self) # 内部控制不能超过黑夜
-            time.sleep(DREAM_POLL_S)
+        for hook in self.hooks:
+            hook(self)
+        now = time.localtime()
+        target = time.mktime((now.tm_year, now.tm_mon, now.tm_mday,
+                              DREAM_NIGHT_END, 0, 0, 0, 0, -1))
+        secs = target - time.mktime(now)
+        time.sleep(secs if secs > 0 else secs + 86400)
