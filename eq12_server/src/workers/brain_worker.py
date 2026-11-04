@@ -10,7 +10,7 @@ from queue import Queue
 from ..core.dream import Dream
 from ..core.decision import Decision
 
-from ..config import DREAM_NIGHT_END, DREAM_NIGHT_START, DREAM_POLL_S
+from ..config import DREAM_NIGHT_END, DREAM_NIGHT_START
 
 
 def is_night(now=None):
@@ -22,17 +22,17 @@ def is_night(now=None):
 
 
 class BrainWorker:
-    """白天跑 Pipeline，晚上跑 DreamPipeline —— 两条链互斥，不并发。"""
+    """白天跑 Decision，晚上跑 Dream —— 两条链互斥，不并发。"""
 
     def __init__(self, queues: dict[str, Queue]):
         self.queues = queues
 
     def run(self):
-        decision = Decision(self.queues)      # hooks 在 Pipeline.__init__ 里注册好了
+        decision = Decision(self.queues)      # hooks 在 Decision.__init__ 里注册好了
         dream = Dream(self.queues)    # 同上
         while True:
             if is_night():
-                dream.run()           # 一整晚：内部循环，天亮返回
+                dream.run()           # 一夜一轮：跑完睡到天亮才返回
             else:
                 decision.process()    # 白天：一轮
             time.sleep(0.1)

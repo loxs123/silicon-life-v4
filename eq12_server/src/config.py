@@ -131,8 +131,9 @@ DELAY_POLL_S = 1.0            # 主循环每轮睡多久（秒）：到点精度
 DELAY_ECHO_TEMPLATE = '{ago}你让我{text}，现在到点了，你来接着办。'
 
 # ======================= 睡眠 / dream =======================
-# 白天跑 Pipeline，晚上跑 DreamPipeline —— 两者**时间上互斥，不并发**，
-# 所以不需要抢占 / 异步 / 预算守卫。判据和整晚循环见 core/dream.py。
+# 白天跑 Decision，晚上跑 Dream —— 两者**时间上互斥，不并发**，
+# 所以不需要抢占 / 异步 / 预算守卫。判据见 workers/brain_worker.py 的 is_night()，
+# 一夜一轮、跑完睡到 DREAM_NIGHT_END 收工的逻辑见 core/dream.py。
 DREAM_NIGHT_START = 23        # 几点开始做梦（24 小时制）
 DREAM_NIGHT_END = 7           # 几点醒；START > END 表示跨午夜
-DREAM_POLL_S = 60.0           # 夜里两遍 dream 之间的间隔（秒）
+DREAM_POLL_S = 60.0           # 已废弃：dream 不再 while 轮询，留着只为不打断别处引用
