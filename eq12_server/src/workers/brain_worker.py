@@ -7,8 +7,8 @@ import re
 import time
 from queue import Queue
 
-from ..core.dream import DreamPipeline
-from ..core.pipeline import Pipeline
+from ..core.dream import Dream
+from ..core.decision import Decision
 
 from ..config import DREAM_NIGHT_END, DREAM_NIGHT_START, DREAM_POLL_S
 
@@ -28,11 +28,11 @@ class BrainWorker:
         self.queues = queues
 
     def run(self):
-        pipeline = Pipeline(self.queues)      # hooks 在 Pipeline.__init__ 里注册好了
-        dream = DreamPipeline(self.queues)    # 同上
+        decision = Decision(self.queues)      # hooks 在 Pipeline.__init__ 里注册好了
+        dream = Dream(self.queues)    # 同上
         while True:
             if is_night():
                 dream.run()           # 一整晚：内部循环，天亮返回
             else:
-                pipeline.process()    # 白天：一轮
+                decision.process()    # 白天：一轮
             time.sleep(0.1)

@@ -6,7 +6,7 @@
 from .hooks import HOOKS
 from .info import Info
 
-class Pipeline:
+class Decision:
     def __init__(self, queues):
         """
         inputs 是一个字典，输入的所有键是队列名:获取到的值

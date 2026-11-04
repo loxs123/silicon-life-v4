@@ -5,7 +5,7 @@ from .dream_hooks import HOOKS
 from .info import Info
 
 
-class DreamPipeline:
+class Dream:
     def __init__(self, queues):
         self.queues = queues
         self.hooks = HOOKS
