@@ -16,5 +16,6 @@ from ..info import Info
 
 # goal-adjustor 放在这里完成
 # 上一个目标失败也需要调整目标树
+# 收到新消息 也需要调整目标树
 def hook(cur_info: Info):
     ...
