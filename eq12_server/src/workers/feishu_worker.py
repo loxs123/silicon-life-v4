@@ -1,50 +1,6 @@
-"""
-FeishuWorker —— 飞书消息网关 worker（只收发消息，不做决策）
-============================================================
+"""飞书网关 worker：长连接收消息 → _sub/feishu 入队；消费 _pub/feishu → 调 API 发出。
 
-eq12_server 进程内直连飞书 OpenAPI（WebSocket 长连接收事件、HTTPS 发消息），
-**不经过**本地 MQTT broker（MQTT 只服务 ESP32 器官）。飞书收发各用一条内部
-队列（在 main_loop 里与 asr/tts 同级创建；名称带 '_' 前缀表示纯内部队列，
-不会被当作 MQTT 主题、也不会被 stop() 哨兵或专职发送线程接管）：
-
-    _sub/feishu   收 / 入站：本 worker 收到飞书用户消息 → 打包成 dict 入队
-                  （文字、图片都进；下游「大脑/桥接」从这里消费。决策统一在
-                   brain，本 worker 不做 LLM 等任何决策 —— 骨架阶段只入队+打日志）
-    _pub/feishu   发 / 出站：大脑/上游把出口消息放进此队列，
-                  本 worker 消费并调用飞书 API 真正发出
-
-队列载荷协议（沿用 v3 src/actors/feishu.py 的 mailbox 协议）：
-
-    feishu -> 下游（_sub/feishu 队列里的 dict）：
-        文字:  {'feishu': True, 'text': <str>, 'message_id': <str>,
-                'chat_id': <str>, 'sender': <str>}
-        图片:  {'feishu': True, 'type': 'image', 'image_key': <str>,
-                'data': <base64 JPEG/PNG>, 'message_id': <str>,
-                'chat_id': <str>, 'sender': <str>}
-                （收到就按 image_key 下载、转 base64 放 data；下载失败就只有
-                 image_key。协议见 core/hooks/protocols/queue.xml）
-
-    上游 -> feishu（_pub/feishu 队列里的消息）：
-        dict {'text': <str>, 'chat_id': <str>}          → 给会话发一条文字
-        dict {'img': <base64 JPEG>, 'chat_id': <str>}   → 给会话发一张图
-              （如 <cam> 拍照结果回传）
-        两种都是**主动发新消息**（im.v1.message.create），不引用任何历史消息。
-        chat_id 通常不用传：省略时用「最近一次收到消息的会话」，再退到
-        config.FEISHU_DEFAULT_CHAT_ID（重启后还没人说话时的兜底）。
-
-依赖：
-    pip install lark-oapi        # 官方 SDK（长连接事件 + 消息/图片 API）
-
-凭据（勿硬编码、勿提交仓库）：
-    set_dashscope_env.cmd 里持久化环境变量 FEISHU_APP_ID / FEISHU_APP_SECRET
-    （飞书自建应用凭据；tenant_access_token 由 SDK 自动获取/缓存/续期）
-
-备注：
-    - lark-oapi 是惰性导入的（_load_lark()）：它在模块顶部导一次要 ~10 秒
-      （上万个子模块），所以只在 run() 里真连飞书时才导，不拖慢启动。
-      未安装时本模块可正常 import，run() 打印提示并返回，其余 worker 不受影响。
-    - 默认连接国内飞书（open.feishu.cn）；若用 Lark 国际版应用，需给 client
-      显式指定 domain=lark.Domain.Lark。
+载荷格式见 core/queues.md。只收发，不做决策。
 """
 
 from __future__ import annotations
@@ -58,10 +14,7 @@ from queue import Queue
 from ..config import (FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_DEFAULT_CHAT_ID,
                       QUEUE_FEISHU_PUB, QUEUE_FEISHU_SUB)
 
-# lark-oapi 官方 SDK：装不上/版本差异都不应拖垮 eq12_server。
-# 这 SDK 是个生成式巨无霸（本机 10727 个子模块），import 一次约 10 秒 —— 所以
-# 不在模块顶部导，改成 run() 里真要连飞书时才导：run() 跑在自己的线程里，
-# 不会拖住启动；具体报错也挪到那里提示。
+# lark-oapi 惰性导入：一万多个子模块，import 一次约 10 秒，放到 run() 里
 _lark = None
 _LARK_IMPORT_ERR = None
 CreateImageRequest = CreateImageRequestBody = None
@@ -69,7 +22,7 @@ CreateMessageRequest = CreateMessageRequestBody = None
 
 
 def _load_lark():
-    """惰性 import lark_oapi（只导一次）：成功返回 True，失败返回 False。"""
+    """导入 lark_oapi（只导一次）；成功 True，失败 False。"""
     global _lark, _LARK_IMPORT_ERR
     global CreateImageRequest, CreateImageRequestBody
     global CreateMessageRequest, CreateMessageRequestBody
@@ -88,7 +41,7 @@ def _load_lark():
 
 
 def _attr(obj, name, default=''):
-    """安全取模型属性：SDK 版本差异导致缺字段时不抛，返回 default。"""
+    """取模型属性；SDK 版本不同缺字段时返回 default，不抛。"""
     try:
         v = getattr(obj, name)
     except Exception:
@@ -114,7 +67,7 @@ def _resp_err(resp):
 
 
 def _sender_text(sender):
-    """尽力取发送者标识（open_id/user_id/…），取不到给空串。"""
+    """尽力取发送者标识（open_id / user_id / …），取不到给空串。"""
     for path in (('id',), ('sender_id', 'open_id'), ('sender_id', 'user_id'),
                  ('sender_id', 'union_id')):
         try:
@@ -129,36 +82,21 @@ def _sender_text(sender):
 
 
 class FeishuWorker:
-    """飞书消息网关：长连接收消息 → _sub/feishu 入队；消费 _pub/feishu → 发出。
-
-    stop_token 语义与其他 worker 一致（队列里出现它即退出主循环）；
-    但 _pub/feishu、_sub/feishu 是 '_' 前缀内部队列，MainLoop.stop() 不会
-    向它们投哨兵 —— 与消费内部 asr/tts 队列的 worker 一样随进程退出（daemon）。
-    """
-
     def __init__(self, queues: dict[str, Queue], stop_token=None,
                  app_id=None, app_secret=None, default_chat_id=None):
         self.queues = queues
         self.stop_token = stop_token
-        # 凭据来自 config（读环境变量，见 set_dashscope_env.cmd），可注入覆盖（测试用）
         self.app_id = app_id if app_id is not None else FEISHU_APP_ID
         self.app_secret = (app_secret if app_secret is not None
                            else FEISHU_APP_SECRET)
-        # 出站会话解析顺序：载荷里的 chat_id → 最近入站会话 → config 兜底
         self._default_chat_id = (default_chat_id if default_chat_id is not None
                                  else FEISHU_DEFAULT_CHAT_ID)
-        self._chat_id = ''     # 最近一次收到消息的会话（出站兜底目标，同 v3）
-        self._api = None       # lark HTTP client（发消息用，惰性创建）
-        self._ws = None        # lark 长连接对象（收事件用）
+        self._chat_id = ''     # 最近一次收到消息的会话，出站兜底用
+        self._api = None       # lark HTTP client，惰性创建
+        self._ws = None        # lark 长连接对象
         self._closing = False
 
-    # ============================ 收（事件回调 → _sub/feishu 入队） =========
     def _on_message(self, data):
-        """lark 长连接事件回调（同步函数即可，SDK 自带线程调用）。
-
-        只做一件事：把收到的文字/图片消息打包成 v3 协议 dict，
-        放进 _sub/feishu 队列 + 打日志。任何异常只打印，不回抛（长连接线程不能死）。
-        """
         try:
             self._on_message0(data)
         except Exception as e:
@@ -179,7 +117,7 @@ class FeishuWorker:
         chat_id = _attr(message, 'chat_id')
         mtype = _attr(message, 'message_type') or _attr(message, 'msg_type')
         if chat_id:
-            self._chat_id = chat_id       # 记住最近会话（发图兜底目标）
+            self._chat_id = chat_id       # 记住最近会话（出站兜底）
 
         raw = _attr(message, 'content')   # SDK 给的是 JSON 字符串
         content = {}
@@ -229,14 +167,8 @@ class FeishuWorker:
         else:
             print('[Feishu] 忽略消息类型: %s' % mtype, flush=True)
 
-    # ============================ 发（消费 _pub/feishu 并调用 API） =========
     def _send_out(self, msg):
-        """处理一条出站消息（文字 / 图片）。异常由 run() 兜底打印。
-
-        两种载荷都走 im.v1.message.create —— 主动发新消息，不引用任何历史消息。
-        目标会话的解析顺序：载荷里的 chat_id → 最近一次收到消息的会话
-        → config.FEISHU_DEFAULT_CHAT_ID（重启后还没人说话时的兜底）。
-        """
+        """发一条出站消息：载荷 chat_id → 最近入站会话 → config 兜底。"""
         if not isinstance(msg, dict):
             print('[Feishu] 忽略未知出站消息: %r' % (msg,), flush=True)
             return
@@ -265,16 +197,14 @@ class FeishuWorker:
         print('[Feishu] 发图片到会话(%s): %dB' % (chat_id, len(jpg)), flush=True)
         self._send_image_to_chat(chat_id, jpg)
 
-    # ------------------------- lark HTTP 发送原语 --------------------------
     def _api_client(self):
-        """惰性构建 lark HTTP client（tenant token 等由 SDK 自动管理）。"""
+        """惰性构建 lark HTTP client（tenant token 由 SDK 管理）。"""
         if self._api is None:
             b = (_lark.Client.builder()
                  .app_id(self.app_id)
                  .app_secret(self.app_secret))
-            # 默认国内飞书域；显式指明更稳（Lark 国际版改成 Domain.Lark）
             domain = getattr(_lark, 'Domain', None)
-            if domain is not None:
+            if domain is not None:      # 默认国内飞书；Lark 国际版改成 Domain.Lark
                 try:
                     b = b.domain(domain.Feishu)
                 except Exception:
@@ -287,10 +217,7 @@ class FeishuWorker:
         return self._api
 
     def _image_base64(self, image_key):
-        """按 image_key 下载图片本体，转成 base64 JPEG/PNG；拿不到返回空串。
-
-        入队时图的 base64 就放在 data 里，下游直接 b64decode 存文件 / 转存都行。
-        """
+        """按 image_key 下载图片转 base64；拿不到返回空串。"""
         try:
             from lark_oapi.api.im.v1 import GetImageRequest
             req = GetImageRequest.builder().image_key(image_key).build()
@@ -305,7 +232,7 @@ class FeishuWorker:
         return ''
 
     def _send_text_to_chat(self, chat_id, text):
-        """主动给会话发一条文字（SDK: im.v1.message.create，不引用任何消息）"""
+        """主动给会话发一条文字（im.v1.message.create）。"""
         req = (CreateMessageRequest.builder()
                .receive_id_type('chat_id')
                .request_body(CreateMessageRequestBody.builder()
@@ -320,7 +247,7 @@ class FeishuWorker:
             print('[Feishu] 发文字失败: %s' % _resp_err(resp), flush=True)
 
     def _upload_image(self, jpeg_bytes):
-        """上传图片（用途=message）→ 返回 image_key；失败返回空串。"""
+        """上传图片（image_type=message）→ image_key；失败返回空串。"""
         req = (CreateImageRequest.builder()
                .request_body(CreateImageRequestBody.builder()
                              .image_type('message')
@@ -337,7 +264,7 @@ class FeishuWorker:
             return ''
 
     def _send_image_to_chat(self, chat_id, jpeg_bytes):
-        """上传图片并主动发给会话（机器人推送，如 <cam> 拍照结果）"""
+        """上传图片并主动发给会话。"""
         key = self._upload_image(jpeg_bytes)
         if not key:
             return
@@ -353,9 +280,8 @@ class FeishuWorker:
         if not _resp_ok(resp):
             print('[Feishu] 发图到会话失败: %s' % _resp_err(resp), flush=True)
 
-    # ============================ 长连接（收） =============================
     def _start_receiver(self):
-        """在 daemon 线程里跑飞书长连接（阻塞）。断线 SDK 自动重连。"""
+        """daemon 线程里跑飞书长连接（阻塞），断线由 SDK 自动重连。"""
 
         def _run():
             try:
@@ -365,14 +291,12 @@ class FeishuWorker:
                            .build())
                 ws_cls = _attr(getattr(_lark, 'ws', None), 'Client')
                 if ws_cls:
-                    # lark-oapi 2.x：独立 ws.Client 跑长连接
-                    self._ws = ws_cls(app_id=self.app_id,
+                    self._ws = ws_cls(app_id=self.app_id,      # lark-oapi 2.x
                                       app_secret=self.app_secret,
                                       event_handler=handler)
                     self._ws.start()
                 else:
-                    # lark-oapi 1.x：主 Client.start(handler) 即长连接
-                    self._api_client().start(handler)
+                    self._api_client().start(handler)          # lark-oapi 1.x
             except Exception as e:
                 print('[Feishu] 长连接异常退出[%s]: %s'
                       % (type(e).__name__, e), flush=True)
@@ -382,9 +306,8 @@ class FeishuWorker:
         t = threading.Thread(target=_run, name='eq12-feishu-ws', daemon=True)
         t.start()
 
-    # ============================ 主循环 / 生命周期 ========================
     def run(self):
-        """自检 → 启动长连接线程（收）→ 阻塞消费 _pub/feishu（发）。"""
+        """自检 → 起长连接线程（收）→ 阻塞消费 _pub/feishu（发）。"""
         missing = [k for k in (QUEUE_FEISHU_SUB, QUEUE_FEISHU_PUB)
                    if k not in self.queues]
         if missing:
@@ -426,7 +349,7 @@ class FeishuWorker:
             self.close()
 
     def close(self):
-        """幂等收尾：停长连接/HTTP client（进程退出时 daemon 线程也会被带走）。"""
+        """幂等收尾：停长连接 / HTTP client。"""
         self._closing = True
         for attr_name in ('_ws', '_api'):
             obj = getattr(self, attr_name, None)
