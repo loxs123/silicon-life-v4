@@ -4,10 +4,11 @@
 seed 带过来的具名文件（如 skill_creator.xml）用名字打开。
 载入时给每个元素编号（id 属性），append_node / edit_node / del_node 按编号改，save() 落盘。
 """
-from datetime import date, datetime
+from datetime import date
 import os
 import re
 import shutil
+import time
 import xml.etree.ElementTree as ET
 
 HOOKS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -26,10 +27,6 @@ def day_dir(kind):
         else:
             os.makedirs(d, exist_ok=True)
     return d
-
-
-def now():
-    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
 
 class BaseLoader:
@@ -188,7 +185,8 @@ class GoalLoader(BaseLoader):
         self.save()
 
     def finish(self):
-        self.edit_node(self.elem_id('finish-time'), f'<finish-time>{now()}</finish-time>')
+        self.edit_node(self.elem_id('finish-time'),
+                       '<finish-time>%s</finish-time>' % time.strftime('%Y-%m-%d %H:%M:%S'))
         self.save()
 
 
@@ -234,7 +232,8 @@ class MemoryLoader(BaseLoader):
 
 if __name__ == '__main__':
     g = GoalLoader.new('<goal><id/><name>试一下</name><content>测试</content><child-goals/>'
-                       '<father-goal-id/><create-time>%s</create-time><finish-time/></goal>' % now())
+                       '<father-goal-id/><create-time>%s</create-time><finish-time/></goal>'
+                       % time.strftime('%Y-%m-%d %H:%M:%S'))
     g.add_child(2)
     g.finish()
     print(GoalLoader(int(g.id)).text)

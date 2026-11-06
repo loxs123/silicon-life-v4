@@ -2,6 +2,10 @@
 import xml.etree.ElementTree as ET
 
 SHAPE = {
+    'sub_goals': {'sub_goal': {'name': None, 'content': None}},
+    'atom_actions': {'atom_action': {'queue': None, 'text': None, 'type': None,
+                                     'value': None, 'direction': None, 'time': None,
+                                     'img': None, 'in': None}},
     'goal': {'id': None,
              'name': None,
              'content': None,

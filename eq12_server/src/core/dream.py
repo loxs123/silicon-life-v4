@@ -6,14 +6,17 @@ from .info import Info
 
 
 class Dream:
+    info = Info()
+
     def __init__(self, queues):
         self.queues = queues
         self.hooks = HOOKS
 
     def run(self):
-        cur_info = Info(queues=self.queues)
+        info = Dream.info
+        info.queues = self.queues
         for hook in self.hooks:
-            hook(cur_info)
+            hook(info)
         now = time.localtime()
         target = time.mktime((now.tm_year, now.tm_mon, now.tm_mday,
                               DREAM_NIGHT_END, 0, 0, 0, 0, -1))

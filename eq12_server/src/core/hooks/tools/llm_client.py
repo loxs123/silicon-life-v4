@@ -1,5 +1,9 @@
 import os
-import dashscope
+
+try:
+    import dashscope
+except ImportError:
+    dashscope = None
 
 from . import loader
 from .loader import GoalLoader, MemoryLoader, SkillLoader, day_dir
@@ -18,7 +22,10 @@ def call_llm(messages, model=MODEL, max_tokens=MAX_TOKENS,
         thinking_budget 思考程度：给思考过程留多少 token，0 = 关掉思考模式
                        （qwen-plus 上限 32768，越大想得越久）。
     """
-    dashscope.api_key = os.environ['DASHSCOPE_API_KEY']
+    if dashscope is None:
+        print('[llm] 没装 dashscope，跳过调用（pip install dashscope）', flush=True)
+        return None
+    dashscope.api_key = os.environ.get('DASHSCOPE_API_KEY', '')
     kwargs = {
         'result_format': 'message',   # 要 message 结构，好取 content
         'stream': False,              # 非流式：一次拿完
@@ -38,6 +45,16 @@ def call_llm(messages, model=MODEL, max_tokens=MAX_TOKENS,
         print('[llm] 失败 %s: %s' % (resp.status_code, resp.message), flush=True)
         return None
     return resp.output.choices[0].message.content
+
+
+def xml(text):
+    """从模型回复里取出最外层 XML：去掉 ``` 围栏，截到最后一个 '>'。"""
+    text = (text or '').strip()
+    if text.startswith('```'):
+        text = text.split('\n', 1)[-1]
+    text = text.rstrip('`').strip()
+    i, j = text.find('<'), text.rfind('>')
+    return text[i:j + 1] if 0 <= i < j else ''
 
 
 # ---------- 统一上下文：所有调用同一个消息序列，越稳定越靠前，好吃前缀缓存 ----------
