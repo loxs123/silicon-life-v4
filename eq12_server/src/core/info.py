@@ -9,6 +9,5 @@ class Info:
     cur_goal: object = None
     cur_skill: object = None
     context: list = field(default_factory=list)
-    action: object = None
     output: object = None
     loaded: bool = False
