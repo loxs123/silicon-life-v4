@@ -1,22 +1,17 @@
 import json
 import queue
 import time
-import re
-from xml.sax.saxutils import escape
 
 from ...config import (QUEUE_ASR, QUEUE_DELAY_SUB, QUEUE_DESKTOP_SUB,
                        QUEUE_EYE_SUB, QUEUE_FEISHU_SUB, QUEUE_LEG_SUB)
 from ..info import Info
 from .tools import log
+from .tools.loader import GoalLoader
 
 TOPICS = (QUEUE_ASR, QUEUE_FEISHU_SUB, QUEUE_DELAY_SUB, QUEUE_DESKTOP_SUB,
           QUEUE_LEG_SUB, QUEUE_EYE_SUB)
-FIELDS = ('queue', 'type', 'text', 'message_id', 'chat_id', 'sender', 'image_key',
-          'data', 'in', 'due_at', 'fired_at', 'width', 'height', 'size', 'fmt',
-          'time', 'command')
 
-
-def _drain(q):
+def _fetch(q):
     items = []
     while True:
         try:
@@ -24,43 +19,25 @@ def _drain(q):
         except queue.Empty:
             return items
 
+def _norm(name, msg):
+    ...
 
-def _norm(name, item):
-    if hasattr(item, 'payload'):
-        item = item.payload
-    if isinstance(item, bytes):
-        try:
-            item = json.loads(item.decode('utf-8'))
-        except Exception:
-            item = item.decode('utf-8', 'replace')
-    if not isinstance(item, dict):
-        item = {'text': item}
-    item = dict(item)
-    item['queue'] = name
-    item.setdefault('type', 'text' if 'text' in item else 'photo')
-    if isinstance(item.get('time'), (int, float)):
-        item['time'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(item['time']))
-    return '<queue_msg>%s</queue_msg>' % ''.join(
-        '<%s>%s</%s>' % (k, escape(json.dumps(item[k], ensure_ascii=False)
-                                   if isinstance(item[k], (dict, list))
-                                   else str(item[k])), k)
-        for k in FIELDS if k in item)
+def load_from_log(cur_info: Info):
+    
+    cur_info.goals = tree
 
-
-def load_goals():
-    today = time.strftime('%Y-%m-%d')
-
-    print(today)
 
 def hook(cur_info: Info):
+    if not cur_info.loaded:
+        load_from_log(cur_info)
+        cur_info.loaded = True
     for name in TOPICS:
-        q = cur_info.queues.get(name)
-        if q is None:
-            continue
-        for item in _drain(q):
-            msg = _norm(name, item)
-            log.write('queue-msg', msg)
+        q = cur_info.queues[name]
+        for msg in _fetch(q):
+            log.write('queue-msg', msg, cur_info.cur_goal)
             cur_info.context.append(msg)
+    
+    
 
 if __name__ == '__main__':
     import types
@@ -86,6 +63,5 @@ if __name__ == '__main__':
                 '"width":320,"height":240,"data":"AAAA"}').encode())),
             ('asr', ''),
             ('_sub/feishu', {}),
-            ('sub/leg', types.SimpleNamespace(topic=b'sub/leg', payload=b'not json')),
     ):
-        print(_norm(name, item))
+        print(json.dumps(_norm(name, item), ensure_ascii=False))

@@ -1,0 +1,22 @@
+{
+  "id": null,
+  "name": "一句话标题",
+  "tags": [
+    "标签，至少一个"
+  ],
+  "description": "一句话说这条记忆是关于什么的",
+  "content": "发生了什么、结论是什么",
+  "time": "2026-11-06 14:20:00",
+  "related-skills": [
+    {
+      "id": 7,
+      "reason": "这次就是用它做的"
+    }
+  ],
+  "related-memorys": [
+    {
+      "id": 3,
+      "reason": "为什么和这条记忆相关"
+    }
+  ]
+}

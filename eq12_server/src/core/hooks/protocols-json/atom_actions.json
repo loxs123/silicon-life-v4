@@ -1,0 +1,47 @@
+{
+  "atom_actions": [
+    {
+      "queue": "tts",
+      "text": "你好呀"
+    },
+    {
+      "queue": "pub/leg",
+      "text": "forward,50,2"
+    },
+    {
+      "queue": "pub/face",
+      "text": "happy"
+    },
+    {
+      "queue": "pub/eye",
+      "text": "photo"
+    },
+    {
+      "queue": "_pub/desktop",
+      "type": "keyboard",
+      "value": "A"
+    },
+    {
+      "queue": "_pub/desktop",
+      "type": "screenshot"
+    },
+    {
+      "queue": "_pub/desktop",
+      "type": "clipboard",
+      "value": "要写进剪贴板的文字"
+    },
+    {
+      "queue": "_pub/feishu",
+      "text": "你好"
+    },
+    {
+      "queue": "_pub/feishu",
+      "img": "cache/screen_001.jpg"
+    },
+    {
+      "queue": "_pub/delay",
+      "text": "提醒我喝水",
+      "in": 900
+    }
+  ]
+}

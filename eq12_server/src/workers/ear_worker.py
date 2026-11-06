@@ -34,7 +34,8 @@ class Callback(RecognitionCallback):
             text = sentence['text']
             if sentence['sentence_end'] and text:
                 print(f'[done]{text}')
-                self.obj.queues[QUEUE_ASR].put(text)
+                self.obj.queues[QUEUE_ASR].put({'queue': QUEUE_ASR, 'type': 'text',
+                                                'text': text})
 
 class EarWorker:
     def __init__(self, queues: dict[str, Queue], stop_token=None):

@@ -1,4 +1,5 @@
 """EQ12 主循环：建队列 / worker / mqtt client，start() 起线程，run() 连 broker 阻塞，stop() 收尾。"""
+import json
 import queue
 import threading
 import time
@@ -7,12 +8,26 @@ import paho.mqtt.client as mqtt
 
 from .config import (BROKER, PORT, PUB_TOPICS, QUEUE_ASR, QUEUE_DELAY_PUB,
                      QUEUE_DELAY_SUB, QUEUE_DESKTOP_PUB, QUEUE_DESKTOP_SUB,
-                     QUEUE_FEISHU_PUB, QUEUE_FEISHU_SUB, QUEUE_TTS,
+                     QUEUE_EAR_IN, QUEUE_FEISHU_PUB, QUEUE_FEISHU_SUB, QUEUE_TTS,
                      SUB_TOPICS, USE_MQTT)
 from .workers import (EarWorker, BrainWorker, SpeakWorker, FeishuWorker,
                       DesktopWorker, DelayWorker)
 
 _STOP = object()   # 停机哨兵：stop() 投进 pub/*、sub/* 队列，消费者 get() 到即退出
+
+
+def queue_msg(topic, payload):
+    """MQTT 上行的 bytes -> queue_msgs.json 那套 dict（sub/ear 的裸 PCM 不走这里）。"""
+    try:
+        body = json.loads(payload.decode('utf-8'))
+    except (UnicodeDecodeError, ValueError):
+        body = {'text': payload.decode('utf-8', 'replace')}
+    if not isinstance(body, dict):
+        body = {'text': body}
+    msg = {'queue': topic}
+    msg.update(body)
+    msg.setdefault('type', 'text' if 'text' in msg else 'photo')
+    return msg
 
 
 class MainLoop:
@@ -121,7 +136,10 @@ class MainLoop:
         print(f"[MainLoop] 与 broker 断开: {reason_code}")
 
     def on_message(self, client, userdata, msg):
-        self.queues[msg.topic].put(msg)
+        if msg.topic == QUEUE_EAR_IN:
+            self.queues[msg.topic].put(msg)
+        else:
+            self.queues[msg.topic].put(queue_msg(msg.topic, msg.payload))
 
     def _start_publishers(self):
         for t in self.pub_topics:

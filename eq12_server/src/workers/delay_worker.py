@@ -50,7 +50,8 @@ class DelayWorker:
             self.items.remove(entry)
             text = DELAY_ECHO_TEMPLATE.format(ago=format_ago(entry['in']),
                                               text=entry['text'])
-            self.queues[QUEUE_DELAY_SUB].put({'text': text, 'in': entry['in'],
+            self.queues[QUEUE_DELAY_SUB].put({'queue': QUEUE_DELAY_SUB, 'type': 'text',
+                                              'text': text, 'in': entry['in'],
                                               'due_at': entry['due_at'],
                                               'fired_at': now})
             print('[Delay] 到期 → %s: %s' % (QUEUE_DELAY_SUB, text), flush=True)

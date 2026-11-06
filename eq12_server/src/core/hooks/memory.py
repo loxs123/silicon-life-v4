@@ -1,6 +1,4 @@
-import re
-
-from ..info import Info
+﻿from ..info import Info
 from .tools import log
 from .tools.llm_client import SELF, call_llm, context
 from .tools.loader import MemoryLoader
@@ -20,16 +18,14 @@ def hook(cur_info: Info):
     row = next((x for x in cur_info.goals if x['goal-id'] == g._id), None)
     if row is None:
         return
-    if row['memory']:
-        cur_info.memory = [MemoryLoader(int(k) if k.isdigit() else k)
+    if row['memory'] is not None:
+        cur_info.cur_memories = [MemoryLoader(int(k) if k.isdigit() else k)
                            for k in row['memory']]
         return
     out = call_llm(context(g, ASK, history=log.history(g._id)))
     if out is None:
         return
     mems = _by_names(out)
-    log.write('retrieve-memory',
-              '<goal-id>%d</goal-id><memory-ids>%s</memory-ids>'
-              % (g._id, ''.join('<id>%d</id>' % m._id for m in mems)), g._id)
+    log.write('retrieve-memory', {'memory-ids': [str(m._id) for m in mems]}, g._id)
     row['memory'] = [str(m._id) for m in mems]
-    cur_info.memory = mems
+    cur_info.cur_memories = mems

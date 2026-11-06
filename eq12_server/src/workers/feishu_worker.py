@@ -138,7 +138,8 @@ class FeishuWorker:
             print('[Feishu] 收到文字(%s): %s' % (sender_name or '?',
                                                text[:80]), flush=True)
             self.queues[QUEUE_FEISHU_SUB].put({
-                'feishu': True,
+                'queue': QUEUE_FEISHU_SUB,
+                'type': 'text',
                 'text': text,
                 'message_id': message_id,
                 'chat_id': chat_id,
@@ -154,15 +155,15 @@ class FeishuWorker:
                 '%dB base64' % len(data) if data else '（下载失败）'),
                 flush=True)
             payload = {
-                'feishu': True,
+                'queue': QUEUE_FEISHU_SUB,
                 'type': 'image',
-                'image_key': image_key,
                 'message_id': message_id,
                 'chat_id': chat_id,
                 'sender': sender_name,
             }
             if data:
                 payload['data'] = data
+            payload['image_key'] = image_key
             self.queues[QUEUE_FEISHU_SUB].put(payload)
         else:
             print('[Feishu] 忽略消息类型: %s' % mtype, flush=True)

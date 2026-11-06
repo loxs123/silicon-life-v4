@@ -1,0 +1,66 @@
+{
+  "queue_msgs": [
+    {
+      "queue": "asr",
+      "type": "text",
+      "text": "你好呀"
+    },
+    {
+      "queue": "_sub/feishu",
+      "type": "text",
+      "text": "你好",
+      "message_id": "om_...",
+      "chat_id": "oc_...",
+      "sender": "ou_..."
+    },
+    {
+      "queue": "_sub/feishu",
+      "type": "image",
+      "data": "base64 JPEG/PNG",
+      "image_key": "img_v2_...",
+      "message_id": "om_...",
+      "chat_id": "oc_...",
+      "sender": "ou_..."
+    },
+    {
+      "queue": "_sub/delay",
+      "type": "text",
+      "text": "15 分钟之前你让我提醒我喝水，现在到点了，你来接着办。",
+      "in": 900,
+      "due_at": 1793000000.0,
+      "fired_at": 1793000002.3
+    },
+    {
+      "queue": "_sub/desktop",
+      "type": "screen",
+      "data": "base64 JPEG",
+      "width": 1920,
+      "height": 1080,
+      "size": 48213,
+      "fmt": "jpeg",
+      "time": "2026-11-06 12:00:00"
+    },
+    {
+      "queue": "_sub/desktop",
+      "type": "done",
+      "command": {
+        "type": "screenshot"
+      },
+      "time": "2026-11-06 12:00:00"
+    },
+    {
+      "queue": "sub/leg",
+      "type": "text",
+      "text": "done:forward,50,2"
+    },
+    {
+      "queue": "sub/eye",
+      "type": "photo",
+      "data": "base64 JPEG",
+      "width": 320,
+      "height": 240,
+      "size": 48213,
+      "time": "2026-11-06 12:00:00"
+    }
+  ]
+}

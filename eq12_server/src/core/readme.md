@@ -36,11 +36,11 @@
 |---|---|
 | `plan` | 今天还没有 goal → 建根目标 `goal_0001`「今天还没有计划」，指定用 `plan` 技能拆它（不调模型） |
 | `goal` | 非阻塞收消息：`asr` / `_sub/feishu` / `_sub/delay` 每条建一个新的根 goal；`_sub/desktop` / `sub/leg` / `sub/eye` 的回执记进日志。选目标：外来消息先办，再办计划，走到第一个没完成的叶子；子目标全完成的父目标直接完成。**GOAL CHECKER**：动作做过、还没判过 → 一个字（是 / 否）判完成 |
-| `skill` | 选技能（只回编号）→ 没有合适的就用 `skill_creator` 造一个（**SKILL CREATOR**）→ 执行：`子目标` 类按 `sub_goal.xml` 出子 goal，`原子动作` 类按 `atom_action.xml` 投队列，置 `action` 结束这一轮 |
+| `skill` | 选技能（只回编号）→ 没有合适的就用 `skill_creator` 造一个（**SKILL CREATOR**）→ 执行：`子目标` 类按 `protocols-json/sub_goals.json` 出子 goal，`原子动作` 类按 `protocols-json/atom_actions.json` 投队列，置 `action` 结束这一轮 |
 | `memory` | 任务级 goal（外来消息的根、计划下的时间段）完成后，用 `memory_creator` 写一条记忆，最近 10 条拼进执行技能时的系统提示 |
 
-- 存储全按 `protocols/`：`states/<今天>/goal_NNNN.xml`、`skills/<今天>/skill_NNNN.xml`、`memory/<今天>/memory_NNNN.xml`，经 `tools/loader.py` 读写（当天目录不存在就从最近一天 / seed 复制，states 不往下带），新内容先过 `tools/checker.py`
-- 日志：`core/log.py`，`hooks/logs/<今天>.log` 一行一个 JSON；goal 的经过、选了哪个技能、回执都从这里读（模型可见 = 已落日志）
+- 存储全按 `protocols-json/`：`states/<今天>/goal_NNNN.json`、`skills/<今天>/skill_NNNN.json`、`memory/<今天>/memory_NNNN.json`，经 `tools/loader.py` 读写（当天目录不存在就从最近一天 / seed 复制，states 不往下带），新内容先过 `tools/checker.py`
+- 日志：`tools/log.py`，`hooks/logs/<今天>.log` 一行一个 JSON；goal 的经过、选了哪个技能、回执都从这里读（模型可见 = 已落日志）
 - 不阻塞：回执异步进日志。投了会回执的动作（桌面 / 腿 / 眼）后，回执没到之前这个 goal 先不判，最多 10 秒
 - 护栏：一个 goal 最多 8 次动作、模型输出坏 3 次放弃、最多拆 4 层
 - 截图 / 照片存 `eq12_server/cache/`，`<img>` 写这个路径转发

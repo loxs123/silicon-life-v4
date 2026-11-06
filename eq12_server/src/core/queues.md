@@ -57,7 +57,7 @@ text = self.queues['asr'].get()       # 读
  'data': '<base64 JPEG/PNG>', 'message_id': 'om_...', 'chat_id': 'oc_...', 'sender': 'ou_...'}
 ```
 靠**有没有 `type` 键**区分这两种；其它消息类型不入队。图片收到就按 `image_key` 下载转
-base64 放 `data`（下载失败时没有 `data`）。完整格式见 `core/hooks/protocols/queue.xml`。
+base64 放 `data`（下载失败时没有 `data`）。完整格式见 `core/hooks/protocols-json/queue_msgs.json`。
 
 ### `_sub/desktop`
 

@@ -1,0 +1,9 @@
+{
+  "id": null,
+  "name": "目标名",
+  "content": "要做什么、做到什么算完成",
+  "child-goals": [],
+  "father-goal-id": null,
+  "create-time": "2026-11-06 09:00:00",
+  "finish-time": ""
+}

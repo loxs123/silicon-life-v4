@@ -1,67 +1,131 @@
+"""按 protocols-json/*.json 校验模型给的 dict。"""
 
-import xml.etree.ElementTree as ET
+import jsonschema
 
-SHAPE = {
-    'sub_goals': {'sub_goal': {'name': None, 'content': None}},
-    'atom_actions': {'atom_action': {'queue': None, 'text': None, 'type': None,
-                                     'value': None, 'direction': None, 'time': None,
-                                     'img': None, 'in': None}},
-    'goal': {'id': None,
-             'name': None,
-             'content': None,
-             'child-goals': {'goal-id': None},
-             'father-goal-id': None,
-             'create-time': None,
-             'finish-time': None},
-    'skill': {'id': None,
-              'type': None,
-              'name': None,
-              'tags': {'tag': None},
-              'description': None,
-              'target': None,
-              'steps': {'step': {'step-name': None, 'step-content': None}},
-              'notes': {'note': None},
-              'verify': None,
-              'output': None},
-    'memory': {'id': None,
-               'name': None,
-               'tags': {'tag': None},
-               'description': None,
-               'content': None,
-               'time': None,
-               'related-skills': {'skill': {'id': None, 'reason': None}},
-               'related-memorys': {'memory': {'id': None, 'reason': None}}},
+SCHEMA = {
+    'goal': {
+        "type": "object",
+        "properties": {
+            "id":              {"type": "integer"},
+            "name":            {"type": "string"},
+            "content":         {"type": "string"},
+            "child-goals":     {"type": "array"},
+            "father-goal-id":  {"type": "integer"},
+            "create-time":     {"type": "string"},
+            "finish-time":     {"type": "string"},
+        },
+        "required": ["id", "name", "content", "child-goals",
+                    "father-goal-id", "create-time", "finish-time"],
+        "additionalProperties": False,
+    },
+    'skill': {
+        "type": "object",
+        "properties": {
+            "id":          {"type": "integer", "minimum": 0},
+            "type":        {"type": "string", "enum": ["子目标", "原子动作"]},
+            "name":        {"type": "string", "minLength": 1},
+            "tags": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "minItems": 1,              # 至少一个
+                "uniqueItems": True,
+            },
+            "description": {"type": "string", "minLength": 1},
+            "target":      {"type": "string", "minLength": 1},
+            "steps": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "step-name":    {"type": "string", "minLength": 1},
+                        "step-content": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["step-name", "step-content"],
+                    "additionalProperties": False,
+                },
+            },
+            "notes": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "minItems": 1,              # 至少一条
+            },
+            "verify": {"type": "string", "minLength": 1},
+            "output": {"type": "string", "minLength": 1},
+        },
+        "required": ["id", "type", "name", "tags", "description",
+                    "target", "steps", "notes", "verify", "output"],
+        "additionalProperties": False,
+    },
+    'memory':  {
+        "type": "object",
+        "properties": {
+            "id": {
+                "type": "integer",   # 新建时可为 null
+                "minimum": 0,
+            },
+            "name":        {"type": "string", "minLength": 1},
+            "tags": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "minItems": 1,                 # 至少一个
+                "uniqueItems": True,
+            },
+            "description": {"type": "string", "minLength": 1},
+            "content":     {"type": "string", "minLength": 1},
+            "time": {
+                "type": "string",
+                # "2026-11-06 14:20:00" 格式
+                "pattern": r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$",
+            },
+            "related-skills": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id":     {"type": "integer", "minimum": 0},
+                        "reason": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["id", "reason"],
+                    "additionalProperties": False,
+                },
+            },
+            "related-memorys": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id":     {"type": "integer", "minimum": 0},
+                        "reason": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["id", "reason"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["id", "name", "tags", "description", "content", "time",
+                    "related-skills", "related-memorys"],
+        "additionalProperties": False,
+    },
 }
 
-def _names(shape) -> str:
-    return '、'.join(f'<{tag}>' for tag in shape)
-
-def _fit(node, shape, path) -> str:
-    """node 底下符合 shape 吗：对不上返回原因，全对返回空串。
-    """
-    for child in node:
-        if child.tag in shape:
-            sub = shape[child.tag]
-        elif shape:
-            return f'{path} 里不认识 <{child.tag}>，只能有 {_names(shape)}'
-        else:
-            return f'{path} 里不认识 <{child.tag}>'
-        reason = _fit(child, sub or {}, f'{path}/{child.tag}')
-        if reason:
-            return reason
-    return ''
-
-def check(text: str, tag: str = '', shape=None) -> str:
-    """检查字符串能不能当一个 XML 节点用（loader.append_node / edit_node 的入参）。
-    """
+def check(data, kind):
     try:
-        node = ET.fromstring(text)
-    except ET.ParseError as err:
-        return f'不是合法 XML：{err}'
-    if tag and node.tag != tag:
-        return f'根标签是 <{node.tag}>，要的是 <{tag}>'
-    if shape is None:
-        if node.tag not in SHAPE:
-            return f'不认识的根标签 <{node.tag}>，只能是 {_names(SHAPE)}'
-        shape = SHAPE[node.tag]
-    return _fit(node, shape, node.tag)
+        jsonschema.validate(instance=data, schema=SCHEMA[kind])
+        return True, None
+    except jsonschema.ValidationError as e:
+        return False, str(e)
+
+
+if __name__ == '__main__':
+    data = {
+        "id": 1,
+        "name": "用户偏好",
+        "tags": ["偏好"],
+        "description": "记录用户喜欢深色主题",
+        "content": "用户明确表示偏好深色模式，后续 UI 默认深色",
+        "time": "2026-11-06 14:20:00",
+        "related-skills": [{"id": 7, "reason": "这次就是用它做的"}],
+        "related-memorys": [],
+    }
+    print(check(data, 'memory'))

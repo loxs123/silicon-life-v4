@@ -90,6 +90,16 @@ QUEUE_DELAY_PUB = '_pub/delay'      # 延迟入：{'text': …, 'in': 秒}
 DASHSCOPE_API_KEY = os.environ.get('DASHSCOPE_API_KEY', '')
 FEISHU_APP_ID = os.environ.get('FEISHU_APP_ID', '')
 FEISHU_APP_SECRET = os.environ.get('FEISHU_APP_SECRET', '')
+SILICONFLOW_API_KEY = os.environ.get('SILICONFLOW_API_KEY', '')
+DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', '')
+
+# ======================= 大脑 / 大模型（硅基流动 SiliconFlow，OpenAI 兼容）=======================
+SILICONFLOW_BASE = 'https://api.siliconflow.cn/v1'
+LLM_MODEL = 'deepseek-ai/DeepSeek-V4.1-Flash'          # 纯文本
+LLM_MODEL_VL = 'deepseek-ai/DeepSeek-V4.1-Flash'    # 带图（image_url / data URL）时自动换它
+LLM_MAX_TOKENS = 2048
+LLM_TEMPERATURE = 0.3
+LLM_TIMEOUT = 60              # 秒
 
 # ======================= 耳朵 / ASR =======================
 ASR_MODEL = 'qwen-audio-3.0-asr-flash-streaming'

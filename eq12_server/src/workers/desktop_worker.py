@@ -280,13 +280,14 @@ class DesktopWorker:
         im.save(buf, 'JPEG', quality=DESKTOP_JPEG_QUALITY)
         jpg = buf.getvalue()
         meta = {
+            'queue': QUEUE_DESKTOP_SUB,
             'type': 'screen',
-            'time': int(time.time()),
-            'size': len(jpg),
+            'data': base64.b64encode(jpg).decode('ascii'),
             'width': getattr(im, 'width', 0),
             'height': getattr(im, 'height', 0),
+            'size': len(jpg),
             'fmt': 'jpeg',
-            'data': base64.b64encode(jpg).decode('ascii'),
+            'time': time.strftime('%Y-%m-%d %H:%M:%S'),
         }
         self.queues[QUEUE_DESKTOP_SUB].put(meta)
         print('[Desktop] 截图已入队 %s: %dx%d %dB (JPEG q=%d)'
@@ -307,11 +308,12 @@ class DesktopWorker:
         return True
 
     def _report_done(self, cmd):
-        """执行成功才发：{'type': 'done', 'time': …, 'command': <原指令>}。"""
+        """执行成功才发：{'queue': …, 'type': 'done', 'command': <原指令>, 'time': …}。"""
         meta = {
+            'queue': QUEUE_DESKTOP_SUB,
             'type': 'done',
-            'time': int(time.time()),
             'command': cmd,
+            'time': time.strftime('%Y-%m-%d %H:%M:%S'),
         }
         self.queues[QUEUE_DESKTOP_SUB].put(meta)
         print('[Desktop] 指令完成已入队 %s: %s' % (QUEUE_DESKTOP_SUB, cmd),

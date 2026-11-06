@@ -15,6 +15,12 @@ class Dream:
     def run(self):
         info = Dream.info
         info.queues = self.queues
+        info.context = []
+        info.cur_goal = None
+        info.cur_skill = None
+        info.cur_memories = []
+        info.action = None
+        info.output = None
         for hook in self.hooks:
             hook(info)
         now = time.localtime()
