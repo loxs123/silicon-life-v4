@@ -11,3 +11,4 @@ class Info:
     context: list = field(default_factory=list)
     output: object = None
     loaded: bool = False
+    actions: list=field(default_factory=list)

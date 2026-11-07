@@ -35,10 +35,6 @@
       "text": "你好"
     },
     {
-      "queue": "_pub/feishu",
-      "img": "cache/screen_001.jpg"
-    },
-    {
       "queue": "_pub/delay",
       "text": "提醒我喝水",
       "in": 900

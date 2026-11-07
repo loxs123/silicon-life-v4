@@ -32,7 +32,7 @@
 {"type":"create-skill", "content": {"id": 2, "type": "原子动作", "name": "…", "tags": [], "description": "…", "target": "…", "steps": [], "notes": [], "verify": "…", "output": "…"}, "time":"xxxx-xx-xx xx:xx:xx", "goal": 123}
 
 ### 检索技能
-{"type": "retrieve-skill", "content": {"skill-ids": ["plan"]}, "time":"xxxx-xx-xx xx:xx:xx", "goal": 123}
+{"type": "retrieve-skill", "content": {"skill-id": 2}, "time":"xxxx-xx-xx xx:xx:xx", "goal": 123}
 
 ### 队列中的消息
 {"type": "queue-msg", "content": {"queue": "asr", "type": "text", "text": "你好呀"}, "time":"xxxx-xx-xx xx:xx:xx"}

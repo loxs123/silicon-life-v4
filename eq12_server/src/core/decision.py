@@ -31,11 +31,6 @@ class Decision:
             Decision.info.loaded = False
         info = Decision.info
         info.queues = self.queues
-        info.context = []
-        info.cur_goal = None
-        info.cur_skill = None
-        info.cur_memories = []
-        info.action = None
-        info.output = None
-        for hook in self.hooks: # 每次调用一次模型
-            hook(info)
+        while not info.actions:
+            for hook in self.hooks: # 每次调用一次模型
+                hook(info)
