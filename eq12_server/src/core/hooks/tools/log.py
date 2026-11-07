@@ -93,6 +93,10 @@ def humanize_atom_action(item):
         return f"设置延迟提醒「{text}」，{humanize_delay(float(item['in']))}"
     return str(item)
 
+def to_data_url(b64):
+    mime = 'image/png' if b64.startswith('iVBOR') else 'image/jpeg'
+    return f"data:{mime};base64,{b64}"
+
 def convert_to_llm_msgs(context):
     """转化为llm消息
     """

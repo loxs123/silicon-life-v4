@@ -10,23 +10,41 @@ text = self.queues['asr'].get()       # 读
 
 ## 一、读：`get()` 到什么
 
+除 `sub/ear` 外，读到的**全是 `dict`**，且一定带 `queue`（来自哪个队列）和 `type` 两个键，
+用 `type` 区分同一队列里的不同消息。本地 worker（asr / 飞书 / 延迟 / 桌面）直接放 dict；
+MQTT 上行话题由 `main_loop.queue_msg()` 把 `bytes` 转成 dict 再入队：
+
+- payload 能 `json.loads` 成对象 → 字段合并进来；
+- 否则（纯文本）→ 放进 `text`；
+- 没有 `type` 时自动补：有 `text` 补 `'text'`，否则补 `'photo'`。
+
 | 队列名 | 常量 | 类型 | 内容 / 字段 |
 |---|---|---|---|
-| `asr` | `QUEUE_ASR` | `str` | 识别出的一句话，如 `'你好呀'`。空文本不入队 |
-| `sub/leg` | `QUEUE_LEG_SUB` | `msg` | `msg.payload` = `bytes`，UTF-8 文本 `done:<规范化指令>` |
-| `sub/eye` | - | `msg` | `msg.payload` = `bytes`，UTF-8 JSON 照片，见下 |
-| `sub/ear` | `QUEUE_EAR_IN` | `msg` | `msg.payload` = `bytes`，裸 PCM **16k/16bit/mono**，640B 一块 |
+| `asr` | `QUEUE_ASR` | `dict` | 识别出的一句话，见下。空文本不入队 |
+| `sub/leg` | `QUEUE_LEG_SUB` | `dict` | 腿的完成回执，`text` = `done:<规范化指令>`，见下 |
+| `sub/eye` | - | `dict` | 照片，见下 |
+| `sub/ear` | `QUEUE_EAR_IN` | `msg` | **唯一不转换的**：原始 MQTT msg，`msg.payload` = 裸 PCM **16k/16bit/mono**，640B 一块 |
 | `_sub/feishu` | `QUEUE_FEISHU_SUB` | `dict` | 收到的飞书消息，见下 |
 | `_sub/desktop` | `QUEUE_DESKTOP_SUB` | `dict` | 桌面结果，见下 |
 | `_sub/delay` | `QUEUE_DELAY_SUB` | `dict` | 到点的那条消息，见下 |
 
+`hooks/loader.py` 每轮把 `asr` `_sub/feishu` `_sub/delay` `_sub/desktop` `sub/leg` `sub/eye`
+全部取空，每条原样写进日志（`queue-msg` 的 `content`）。完整示例见
+`core/hooks/protocols-json/queue_msgs.json`。
+
+### `asr`
+
+```python
+{'queue': 'asr', 'type': 'text', 'text': '你好呀'}
+```
+
 ### `sub/leg`
 
 ```python
-'done:forward,50,2'    # 前进 50% 跑满 2 秒、电机已停
-'done:pan,90'          # 云台水平已到 90°
-'done:right,30,0.5'    # 原地右转 0.5 秒完毕
-'done:center'          # 复位完成（云台回中 + 电机停）
+{'queue': 'sub/leg', 'type': 'text', 'text': 'done:forward,50,2'}   # 前进 50% 跑满 2 秒、电机已停
+{'queue': 'sub/leg', 'type': 'text', 'text': 'done:pan,90'}         # 云台水平已到 90°
+{'queue': 'sub/leg', 'type': 'text', 'text': 'done:right,30,0.5'}   # 原地右转 0.5 秒完毕
+{'queue': 'sub/leg', 'type': 'text', 'text': 'done:center'}         # 复位完成（云台回中 + 电机停）
 ```
 
 腿是**串行**的：投一条 `pub/leg` 之后，`sub/leg` 里来的下一条回执就是它做完了。
@@ -41,48 +59,52 @@ text = self.queues['asr'].get()       # 读
 ### `sub/eye`
 
 ```python
-{'type': 'photo', 'time': '2025-06-01 12:00:00', 'size': 48213,
+{'queue': 'sub/eye', 'type': 'photo', 'time': '2025-06-01 12:00:00', 'size': 48213,
  'width': 320, 'height': 240, 'data': '<base64 JPEG>'}
 ```
-`msg.payload` 是 `bytes`，得先 `json.loads`。⚠️ 这里的 `time` 是**字符串**。
+已经是 dict，不用再 `json.loads`。`time` 是**字符串**。
 
 ### `_sub/feishu`
 
 ```python
-# 文字消息（没有 type 键）
-{'feishu': True, 'text': '你好', 'message_id': 'om_...', 'chat_id': 'oc_...', 'sender': 'ou_...'}
+# 文字消息
+{'queue': '_sub/feishu', 'type': 'text', 'text': '你好',
+ 'message_id': 'om_...', 'chat_id': 'oc_...', 'sender': 'ou_...'}
 
-# 图片消息（多了 type 和 image_key；data 是 base64 图片本体）
-{'feishu': True, 'type': 'image', 'image_key': 'img_v2_...',
+# 图片消息（data 是 base64 图片本体）
+{'queue': '_sub/feishu', 'type': 'image', 'image_key': 'img_v2_...',
  'data': '<base64 JPEG/PNG>', 'message_id': 'om_...', 'chat_id': 'oc_...', 'sender': 'ou_...'}
 ```
-靠**有没有 `type` 键**区分这两种；其它消息类型不入队。图片收到就按 `image_key` 下载转
-base64 放 `data`（下载失败时没有 `data`）。完整格式见 `core/hooks/protocols-json/queue_msgs.json`。
+用 `type` 区分（`text` / `image`）；其它飞书消息类型不入队。图片收到就按 `image_key`
+下载转 base64 放 `data`，**下载失败时没有 `data` 键**。`sender` 是发送者 ID（open_id / user_id / union_id 里取到的第一个），取不到时为空串。
 
 ### `_sub/desktop`
 
 ```python
 # 截图本体
-{'type': 'screen', 'time': <unix秒>, 'size': <JPEG字节数>,
- 'width': W, 'height': H, 'fmt': 'jpeg', 'data': '<base64 JPEG>'}
+{'queue': '_sub/desktop', 'type': 'screen', 'time': '2026-11-07 22:00:00',
+ 'size': <JPEG字节数>, 'width': W, 'height': H, 'fmt': 'jpeg', 'data': '<base64 JPEG>'}
 
 # 指令完成回执；command 是原样回传的那条指令
-{'type': 'done', 'time': <unix秒>, 'command': <原始指令 dict>}
+{'queue': '_sub/desktop', 'type': 'done', 'time': '2026-11-07 22:00:00',
+ 'command': <原始指令 dict>}
 ```
-用 `type` 区分两类。**两种载荷谁先谁后不保证，别依赖顺序。**
+`time` 是**字符串** `'%Y-%m-%d %H:%M:%S'`。用 `type` 区分两类。
+**两种载荷谁先谁后不保证，别依赖顺序。**
 指令无效或执行失败**只打日志、不回执** → 等回执必须设超时。
 
 ### `_sub/delay`
 
 ```python
 # 到点推的这一条
-{'text': '15 分钟之前你让我提醒我喝水，现在到点了，你来接着办。',
- 'in': 900.0, 'due_at': <unix秒>, 'fired_at': <unix秒>}
+{'queue': '_sub/delay', 'type': 'text',
+ 'text': '15 分钟之前你让我提醒我喝水，现在到点了，你来接着办。',
+ 'in': 900.0, 'due_at': <unix秒 float>, 'fired_at': <unix秒 float>}
 ```
 
 `text` 就是那句话（模板 `config.DELAY_ECHO_TEMPLATE`，占位符 `{ago}` `{text}`）。
-⚠️ 目前**没有下游消费者**：DelayWorker 只负责把它推进来，谁读 `_sub/delay` 谁决定
-下一步（说 / 做 / 转发都行），它不碰 asr / tts 等任何别的队列。
+注意这里的 `due_at` / `fired_at` 是 **unix 秒**（`time.time()`），和 desktop / eye 的字符串时间不同。
+`loader` 取出记日志，`goal` hook 每条建一个新的根 goal。
 
 ---
 

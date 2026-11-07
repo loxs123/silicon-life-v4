@@ -12,3 +12,4 @@ class Info:
     output: object = None
     loaded: bool = False
     actions: list=field(default_factory=list)
+    cur_messages: list=field(default_factory=list)
